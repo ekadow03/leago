@@ -1,7 +1,7 @@
 // app/tournaments/[tournamentSlug]/page.tsx
 import { createClient } from '@/lib/supabase/server';
 import TournamentPublic from './tournament-public';
-import Nav from '@/components/nav';
+import BrandedNav from '@/components/branded-nav';
 
 export default async function PublicTournamentPage({
   params,
@@ -13,20 +13,27 @@ export default async function PublicTournamentPage({
 
   const { data: tournament } = await supabase
     .from('tournaments')
-    .select('id, name, description, location, start_date, end_date, entry_fee_cents, status, organizations ( name )')
+    .select(
+      `
+      id, name, description, location, start_date, end_date, entry_fee_cents, status,
+      organizations ( name, branding_theme )
+    `
+    )
     .eq('slug', tournamentSlug)
     .single();
 
   if (!tournament) {
     return (
       <div>
-        <Nav />
+        <BrandedNav organizationName="leago" />
         <div className="empty-state" style={{ marginTop: 80 }}>
           <p>Tournament not found.</p>
         </div>
       </div>
     );
   }
+
+  const org = tournament.organizations as any;
 
   const { data: teams } = await supabase
     .from('tournament_teams')
@@ -43,9 +50,12 @@ export default async function PublicTournamentPage({
 
   return (
     <div>
-      <Nav />
-      <div className="hero-band" style={{ paddingBottom: 56 }}>
-        <p className="hero-eyebrow">{(tournament.organizations as any).name}</p>
+      <BrandedNav organizationName={org.name} branding={org.branding_theme} />
+      <div
+        className="hero-band"
+        style={{ paddingBottom: 56, background: org.branding_theme?.primaryColor || undefined }}
+      >
+        <p className="hero-eyebrow">{org.name}</p>
         <h1 className="hero-title">{tournament.name}</h1>
         {tournament.location && <p className="hero-subtitle">{tournament.location}</p>}
       </div>
