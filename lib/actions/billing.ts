@@ -11,14 +11,7 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOrgAdmin } from '@/lib/org-context';
 import { stripe } from '@/lib/stripe';
-
-export const TIERS = {
-  starter: { label: 'Starter', priceCents: 4900 },
-  growth: { label: 'Growth', priceCents: 9900 },
-  enterprise: { label: 'Enterprise', priceCents: 19900 },
-} as const;
-
-export type TierKey = keyof typeof TIERS;
+import { TIERS, TierKey } from '@/lib/billing-tiers';
 
 export async function startSubscriptionCheckout(
   organizationId: string,

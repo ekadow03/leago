@@ -2,7 +2,8 @@
 'use client';
 
 import { useState } from 'react';
-import { startSubscriptionCheckout, cancelSubscription, TIERS, TierKey } from '@/lib/actions/billing';
+import { startSubscriptionCheckout, cancelSubscription } from '@/lib/actions/billing';
+import { TIERS, TierKey } from '@/lib/billing-tiers';
 
 interface Subscription {
   id: string;
