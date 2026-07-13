@@ -177,3 +177,6 @@ export async function undoLastPick(draftSessionId: string): Promise<void> {
 
   await admin
     .from('draft_sessions')
+    .update({ current_pick_index: session.current_pick_index - 1, status: 'live' })
+    .eq('id', draftSessionId);
+}
