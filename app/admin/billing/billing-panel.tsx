@@ -54,24 +54,22 @@ export default function BillingPanel({
   const isActive = subscription?.status === 'active';
 
   return (
-    <div style={{ maxWidth: 700, margin: '40px auto', fontFamily: 'system-ui', padding: '0 20px' }}>
-      <h1>{organizationName} — Billing</h1>
-
-      {error && <p style={{ color: 'red' }}>{error}</p>}
+    <div>
+      {error && <p style={{ color: '#B23A2E', marginBottom: 12 }}>{error}</p>}
 
       {subscription && (
-        <div style={{ padding: 16, background: '#f5f5f5', borderRadius: 8, marginBottom: 24 }}>
+        <div className="current-plan-card" style={{ marginBottom: 24 }}>
           <div>
             Current plan: <strong>{TIERS[subscription.tier as TierKey]?.label ?? subscription.tier}</strong>{' '}
-            <span style={{ color: isActive ? 'green' : '#a00' }}>({subscription.status})</span>
+            <span className={`status-badge ${isActive ? 'active' : 'canceled'}`}>{subscription.status}</span>
           </div>
           {subscription.current_period_end && (
-            <div style={{ fontSize: 13, color: '#666' }}>
+            <div style={{ fontSize: 13, color: 'var(--gray)', marginTop: 6 }}>
               {isActive ? 'Renews' : 'Ends'} {new Date(subscription.current_period_end).toLocaleDateString()}
             </div>
           )}
           {isActive && (
-            <button onClick={handleCancel} disabled={canceling} style={{ marginTop: 8, fontSize: 13, color: '#a00' }}>
+            <button onClick={handleCancel} disabled={canceling} className="btn-small" style={{ marginTop: 12 }}>
               {canceling ? 'Canceling…' : 'Cancel subscription'}
             </button>
           )}
@@ -80,15 +78,15 @@ export default function BillingPanel({
 
       {!isActive && (
         <>
-          <h2>Choose a plan</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
+          <h3 style={{ fontWeight: 800 }}>Choose a plan</h3>
+          <div className="plan-grid">
             {(Object.keys(TIERS) as TierKey[]).map((key) => {
               const tier = TIERS[key];
               return (
-                <div key={key} style={{ border: '1px solid #ddd', borderRadius: 8, padding: 16, textAlign: 'center' }}>
-                  <div style={{ fontWeight: 600 }}>{tier.label}</div>
-                  <div style={{ fontSize: 24, margin: '8px 0' }}>${(tier.priceCents / 100).toFixed(0)}/mo</div>
-                  <button onClick={() => handleSubscribe(key)} disabled={loadingTier !== null}>
+                <div key={key} className="plan-card">
+                  <div className="plan-name">{tier.label}</div>
+                  <div className="plan-price">${(tier.priceCents / 100).toFixed(0)}/mo</div>
+                  <button onClick={() => handleSubscribe(key)} disabled={loadingTier !== null} className="btn-primary" style={{ width: '100%' }}>
                     {loadingTier === key ? 'Redirecting…' : 'Subscribe'}
                   </button>
                 </div>

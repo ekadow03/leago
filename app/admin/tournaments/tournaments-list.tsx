@@ -32,11 +32,7 @@ export default function TournamentsList({
   const [submitting, setSubmitting] = useState(false);
 
   function slugify(text: string): string {
-    return text
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/(^-|-$)/g, '');
+    return text.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
   }
 
   async function handleCreate(e: React.FormEvent) {
@@ -75,64 +71,52 @@ export default function TournamentsList({
   }
 
   return (
-    <div style={{ maxWidth: 700, margin: '40px auto', fontFamily: 'system-ui', padding: '0 20px' }}>
-      <h1>{organizationName} — Tournaments</h1>
+    <div>
+      {error && <p style={{ color: '#B23A2E', marginBottom: 12 }}>{error}</p>}
 
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-
-      <button onClick={() => setShowForm((s) => !s)} style={{ marginBottom: 16 }}>
+      <button onClick={() => setShowForm((s) => !s)} className="btn-small" style={{ marginBottom: 16 }}>
         {showForm ? 'Cancel' : '+ New tournament'}
       </button>
 
       {showForm && (
-        <form onSubmit={handleCreate} style={{ border: '1px solid #ddd', borderRadius: 8, padding: 16, marginBottom: 24 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <input placeholder="Tournament name" value={name} onChange={(e) => setName(e.target.value)} required />
-            <label>
-              Entry fee ($):{' '}
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={entryFee}
-                onChange={(e) => setEntryFee(e.target.value)}
-                style={{ width: 80 }}
-              />
-            </label>
-            <label>
-              Start date:{' '}
-              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-            </label>
-            <button type="submit" disabled={submitting}>
-              {submitting ? 'Creating…' : 'Create tournament'}
-            </button>
-          </div>
+        <form onSubmit={handleCreate} className="form-card" style={{ marginBottom: 24 }}>
+          <label className="form-label">Tournament name</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} className="form-input" required />
+          <label className="form-label">Entry fee ($)</label>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={entryFee}
+            onChange={(e) => setEntryFee(e.target.value)}
+            className="form-input"
+          />
+          <label className="form-label">Start date</label>
+          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="form-input" />
+          <button type="submit" disabled={submitting} className="btn-primary" style={{ width: '100%' }}>
+            {submitting ? 'Creating…' : 'Create tournament'}
+          </button>
         </form>
       )}
 
-      {tournaments.length === 0 && <p style={{ color: '#666' }}>No tournaments yet.</p>}
+      {tournaments.length === 0 && <p style={{ color: 'var(--gray)' }}>No tournaments yet.</p>}
 
-      {tournaments.map((t) => (
-        <Link
-          key={t.id}
-          href={`/admin/tournaments/${t.id}`}
-          style={{
-            display: 'block',
-            padding: 12,
-            border: '1px solid #ddd',
-            borderRadius: 8,
-            marginBottom: 8,
-            textDecoration: 'none',
-            color: 'inherit',
-          }}
-        >
-          <div style={{ fontWeight: 600 }}>{t.name}</div>
-          <div style={{ fontSize: 13, color: '#666' }}>
-            {t.status} · ${(t.entry_fee_cents / 100).toFixed(2)} entry
-            {t.start_date && ` · ${t.start_date}`}
-          </div>
-        </Link>
-      ))}
+      {tournaments.length > 0 && (
+        <div className="data-table-card">
+          {tournaments.map((t) => (
+            <Link key={t.id} href={`/admin/tournaments/${t.id}`} className="data-row" style={{ textDecoration: 'none', color: 'inherit' }}>
+              <div>
+                <div className="data-row-name">{t.name}</div>
+                <div className="data-row-meta">
+                  ${(t.entry_fee_cents / 100).toFixed(2)} entry
+                  {t.start_date && ` · ${t.start_date}`}
+                </div>
+              </div>
+              <span className={`status-badge ${t.status === 'complete' ? 'confirmed' : 'pending'}`}>{t.status}</span>
+            </Link>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

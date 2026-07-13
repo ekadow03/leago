@@ -29,10 +29,7 @@ export default function ComplianceUploadForm({
   const [error, setError] = useState<string | null>(null);
   const [records, setRecords] = useState(existingRecords);
 
-  async function handleFileChange(
-    type: 'birth_certificate' | 'coach_cert',
-    e: React.ChangeEvent<HTMLInputElement>
-  ) {
+  async function handleFileChange(type: 'birth_certificate' | 'coach_cert', e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -43,10 +40,7 @@ export default function ComplianceUploadForm({
       await uploadComplianceDocument({ personId, organizationId, type, file });
       setRecords((prev) => {
         const withoutThisType = prev.filter((r) => r.type !== type);
-        return [
-          ...withoutThisType,
-          { id: 'pending-refresh', type, status: 'submitted', verified_at: null },
-        ];
+        return [...withoutThisType, { id: 'pending-refresh', type, status: 'submitted', verified_at: null }];
       });
     } catch (err: any) {
       setError(err.message);
@@ -58,54 +52,37 @@ export default function ComplianceUploadForm({
 
   return (
     <div>
-      {error && <p style={{ color: 'red' }}>{error}</p>}
+      {error && <p style={{ color: '#B23A2E' }}>{error}</p>}
 
       {REQUIREMENT_TYPES.map(({ value, label }) => {
         const record = records.find((r) => r.type === value);
         const status = record?.status ?? 'not started';
+        const badgeClass = status === 'verified' ? 'active' : status === 'rejected' || status === 'expired' ? 'canceled' : status === 'submitted' ? 'pending' : '';
 
         return (
-          <div key={value} style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #eee' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <strong>{label}</strong>
-                <div style={{ fontSize: 13, color: statusColor(status) }}>{status}</div>
+          <div key={value} className="shift-row">
+            <div>
+              <strong>{label}</strong>
+              <div style={{ marginTop: 2 }}>
+                {badgeClass ? <span className={`status-badge ${badgeClass}`}>{status}</span> : <span style={{ fontSize: 13, color: 'var(--gray)' }}>{status}</span>}
               </div>
-
-              <label style={{ cursor: 'pointer' }}>
-                <span style={{ padding: '6px 12px', border: '1px solid #ccc', borderRadius: 6, fontSize: 13 }}>
-                  {uploading === value
-                    ? 'Uploading…'
-                    : record
-                      ? 'Re-upload'
-                      : 'Upload'}
-                </span>
-                <input
-                  type="file"
-                  accept=".pdf,.jpg,.jpeg,.png"
-                  onChange={(e) => handleFileChange(value, e)}
-                  disabled={uploading !== null}
-                  style={{ display: 'none' }}
-                />
-              </label>
             </div>
+
+            <label style={{ cursor: 'pointer' }}>
+              <span className="btn-small">
+                {uploading === value ? 'Uploading…' : record ? 'Re-upload' : 'Upload'}
+              </span>
+              <input
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png"
+                onChange={(e) => handleFileChange(value, e)}
+                disabled={uploading !== null}
+                style={{ display: 'none' }}
+              />
+            </label>
           </div>
         );
       })}
     </div>
   );
-}
-
-function statusColor(status: string): string {
-  switch (status) {
-    case 'verified':
-      return 'green';
-    case 'rejected':
-    case 'expired':
-      return 'red';
-    case 'submitted':
-      return '#b8860b';
-    default:
-      return '#999';
-  }
 }

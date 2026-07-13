@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getCurrentUserMemberships } from '@/lib/org-context';
 import { redirect } from 'next/navigation';
 import DraftBoard from './draft-board';
+import Nav from '@/components/nav';
 
 export default async function DraftPage({
   params,
@@ -27,7 +28,14 @@ export default async function DraftPage({
     .single();
 
   if (!division) {
-    return <div style={{ padding: 40 }}>Division not found.</div>;
+    return (
+      <div className="admin-page">
+        <Nav />
+        <div className="empty-state" style={{ marginTop: 80 }}>
+          <p>Division not found.</p>
+        </div>
+      </div>
+    );
   }
 
   const season = division.seasons as any;
@@ -39,7 +47,14 @@ export default async function DraftPage({
   );
 
   if (!isAdmin) {
-    return <div style={{ padding: 40 }}>You must be an organization admin to view this page.</div>;
+    return (
+      <div className="admin-page">
+        <Nav />
+        <div className="empty-state" style={{ marginTop: 80 }}>
+          <p>You must be an organization admin to view this page.</p>
+        </div>
+      </div>
+    );
   }
 
   const { data: teams } = await supabase
@@ -76,16 +91,25 @@ export default async function DraftPage({
   }
 
   return (
-    <DraftBoard
-      organizationId={organizationId}
-      seasonId={division.season_id}
-      divisionId={divisionId}
-      divisionName={division.name}
-      teams={teams ?? []}
-      registrations={(registrations as any) ?? []}
-      evaluations={evaluations ?? []}
-      existingSession={existingSession ?? null}
-      initialPicks={picks}
-    />
+    <div className="admin-page">
+      <Nav />
+      <div className="admin-header">
+        <h1>{division.name}</h1>
+        <p>Live Draft</p>
+      </div>
+      <div className="admin-body">
+        <DraftBoard
+          organizationId={organizationId}
+          seasonId={division.season_id}
+          divisionId={divisionId}
+          divisionName={division.name}
+          teams={teams ?? []}
+          registrations={(registrations as any) ?? []}
+          evaluations={evaluations ?? []}
+          existingSession={existingSession ?? null}
+          initialPicks={picks}
+        />
+      </div>
+    </div>
   );
 }

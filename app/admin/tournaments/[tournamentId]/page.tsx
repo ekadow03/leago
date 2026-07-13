@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getCurrentUserMemberships } from '@/lib/org-context';
 import { redirect } from 'next/navigation';
 import TournamentAdmin from './tournament-admin';
+import Nav from '@/components/nav';
 
 export default async function TournamentAdminPage({
   params,
@@ -27,7 +28,14 @@ export default async function TournamentAdminPage({
     .single();
 
   if (!tournament) {
-    return <div style={{ padding: 40 }}>Tournament not found.</div>;
+    return (
+      <div className="admin-page">
+        <Nav />
+        <div className="empty-state" style={{ marginTop: 80 }}>
+          <p>Tournament not found.</p>
+        </div>
+      </div>
+    );
   }
 
   const memberships = await getCurrentUserMemberships();
@@ -36,7 +44,14 @@ export default async function TournamentAdminPage({
   );
 
   if (!isAdmin) {
-    return <div style={{ padding: 40 }}>You must be an organization admin to view this page.</div>;
+    return (
+      <div className="admin-page">
+        <Nav />
+        <div className="empty-state" style={{ marginTop: 80 }}>
+          <p>You must be an organization admin to view this page.</p>
+        </div>
+      </div>
+    );
   }
 
   const { data: teams } = await supabase
@@ -53,11 +68,20 @@ export default async function TournamentAdminPage({
     .order('match_number', { ascending: true });
 
   return (
-    <TournamentAdmin
-      organizationId={tournament.organization_id}
-      tournament={tournament}
-      initialTeams={teams ?? []}
-      initialMatches={matches ?? []}
-    />
+    <div className="admin-page">
+      <Nav />
+      <div className="admin-header">
+        <h1>{tournament.name}</h1>
+        <p>${(tournament.entry_fee_cents / 100).toFixed(2)} entry</p>
+      </div>
+      <div className="admin-body">
+        <TournamentAdmin
+          organizationId={tournament.organization_id}
+          tournament={tournament}
+          initialTeams={teams ?? []}
+          initialMatches={matches ?? []}
+        />
+      </div>
+    </div>
   );
 }

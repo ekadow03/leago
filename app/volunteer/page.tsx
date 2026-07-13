@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getCurrentUserMemberships } from '@/lib/org-context';
 import { redirect } from 'next/navigation';
 import VolunteerList from './volunteer-list';
+import Nav from '@/components/nav';
 
 export default async function VolunteerPage() {
   const supabase = await createClient();
@@ -23,8 +24,11 @@ export default async function VolunteerPage() {
 
   if (!person) {
     return (
-      <div style={{ maxWidth: 480, margin: '80px auto', fontFamily: 'system-ui' }}>
-        <p style={{ color: 'red' }}>No profile found for your account.</p>
+      <div className="admin-page">
+        <Nav />
+        <div className="empty-state" style={{ marginTop: 80 }}>
+          <p>No profile found for your account.</p>
+        </div>
       </div>
     );
   }
@@ -33,8 +37,11 @@ export default async function VolunteerPage() {
 
   if (memberships.length === 0) {
     return (
-      <div style={{ maxWidth: 480, margin: '80px auto', fontFamily: 'system-ui' }}>
-        <p style={{ color: '#666' }}>You're not a member of any organization yet.</p>
+      <div className="admin-page">
+        <Nav />
+        <div className="empty-state" style={{ marginTop: 80 }}>
+          <p>You're not a member of any organization yet.</p>
+        </div>
       </div>
     );
   }
@@ -51,30 +58,33 @@ export default async function VolunteerPage() {
   const eventIds = (events ?? []).map((e) => e.id);
 
   const { data: shifts } = eventIds.length
-    ? await supabase
-        .from('volunteer_shifts')
-        .select('id, event_id, role, slots_total, notes')
-        .in('event_id', eventIds)
+    ? await supabase.from('volunteer_shifts').select('id, event_id, role, slots_total, notes').in('event_id', eventIds)
     : { data: [] };
 
   const shiftIds = (shifts ?? []).map((s) => s.id);
 
   const { data: signups } = shiftIds.length
-    ? await supabase
-        .from('volunteer_signups')
-        .select('id, shift_id, person_id, people ( first_name, last_name )')
-        .in('shift_id', shiftIds)
+    ? await supabase.from('volunteer_signups').select('id, shift_id, person_id, people ( first_name, last_name )').in('shift_id', shiftIds)
     : { data: [] };
 
   return (
-    <VolunteerList
-      organizationId={org.organizationId}
-      organizationName={org.organizationName}
-      isAdmin={isAdmin}
-      currentPersonId={person.id}
-      events={events ?? []}
-      shifts={shifts ?? []}
-      signups={(signups as any) ?? []}
-    />
+    <div className="admin-page">
+      <Nav />
+      <div className="admin-header">
+        <h1>Volunteer</h1>
+        <p>{org.organizationName}</p>
+      </div>
+      <div className="admin-body">
+        <VolunteerList
+          organizationId={org.organizationId}
+          organizationName={org.organizationName}
+          isAdmin={isAdmin}
+          currentPersonId={person.id}
+          events={events ?? []}
+          shifts={shifts ?? []}
+          signups={(signups as any) ?? []}
+        />
+      </div>
+    </div>
   );
 }

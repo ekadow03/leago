@@ -1,13 +1,7 @@
 // app/tournaments/[tournamentSlug]/page.tsx
-//
-// Public — no auth required. Matches the /tournaments/{slug} link shown
-// on the admin page. Slug lookup isn't globally unique across orgs (only
-// unique per-org in the schema) — fine for now with a single test org;
-// worth revisiting with an org-prefixed URL if/when multiple leagues host
-// tournaments with overlapping slugs.
-
 import { createClient } from '@/lib/supabase/server';
 import TournamentPublic from './tournament-public';
+import Nav from '@/components/nav';
 
 export default async function PublicTournamentPage({
   params,
@@ -25,8 +19,11 @@ export default async function PublicTournamentPage({
 
   if (!tournament) {
     return (
-      <div style={{ maxWidth: 480, margin: '80px auto', fontFamily: 'system-ui' }}>
-        <p>Tournament not found.</p>
+      <div>
+        <Nav />
+        <div className="empty-state" style={{ marginTop: 80 }}>
+          <p>Tournament not found.</p>
+        </div>
       </div>
     );
   }
@@ -45,10 +42,16 @@ export default async function PublicTournamentPage({
     .order('match_number', { ascending: true });
 
   return (
-    <TournamentPublic
-      tournament={tournament as any}
-      teams={teams ?? []}
-      matches={matches ?? []}
-    />
+    <div>
+      <Nav />
+      <div className="hero-band" style={{ paddingBottom: 56 }}>
+        <p className="hero-eyebrow">{(tournament.organizations as any).name}</p>
+        <h1 className="hero-title">{tournament.name}</h1>
+        {tournament.location && <p className="hero-subtitle">{tournament.location}</p>}
+      </div>
+      <div className="schedule-body">
+        <TournamentPublic tournament={tournament as any} teams={teams ?? []} matches={matches ?? []} />
+      </div>
+    </div>
   );
 }

@@ -85,15 +85,12 @@ export default function DraftBoard({
 
       if (isCancelled || !session) return;
 
-      console.log('[draft realtime] subscribing to draft-' + session.id);
-
       const channel = supabase
         .channel(`draft-${session.id}`)
         .on(
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'draft_picks', filter: `draft_session_id=eq.${session.id}` },
           (payload) => {
-            console.log('[draft realtime] INSERT event received:', payload);
             setPicks((prev) => {
               if (prev.some((p) => p.id === payload.new.id)) return prev;
               return [...prev, payload.new as Pick].sort((a, b) => a.pick_number - b.pick_number);
@@ -104,7 +101,6 @@ export default function DraftBoard({
           'postgres_changes',
           { event: 'DELETE', schema: 'public', table: 'draft_picks', filter: `draft_session_id=eq.${session.id}` },
           (payload) => {
-            console.log('[draft realtime] DELETE event received:', payload);
             setPicks((prev) => prev.filter((p) => p.id !== payload.old.id));
           }
         )
@@ -112,13 +108,10 @@ export default function DraftBoard({
           'postgres_changes',
           { event: 'UPDATE', schema: 'public', table: 'draft_sessions', filter: `id=eq.${session.id}` },
           (payload) => {
-            console.log('[draft realtime] UPDATE event received:', payload);
             setSession(payload.new as DraftSession);
           }
         )
-        .subscribe((status) => {
-          console.log('[draft realtime] subscription status:', status);
-        });
+        .subscribe();
 
       channelRef.current = channel;
     }
@@ -129,7 +122,6 @@ export default function DraftBoard({
     return () => {
       isCancelled = true;
       if (channelRef.current) {
-        console.log('[draft realtime] unsubscribing');
         supabase.removeChannel(channelRef.current);
       }
     };
@@ -192,72 +184,59 @@ export default function DraftBoard({
   }
 
   return (
-    <div style={{ maxWidth: 1000, margin: '40px auto', fontFamily: 'system-ui', padding: '0 20px' }}>
-      <h1>{divisionName} — Live Draft</h1>
-
-      {error && <p style={{ color: 'red' }}>{error}</p>}
+    <div>
+      {error && <p style={{ color: '#B23A2E', marginBottom: 12 }}>{error}</p>}
 
       {session.status === 'complete' ? (
-        <p style={{ fontSize: 18, fontWeight: 600, color: 'green' }}>✅ Draft complete!</p>
+        <div className="on-clock-banner" style={{ background: 'var(--green-dark)' }}>
+          <div className="pick-team">✅ Draft complete!</div>
+        </div>
       ) : (
-        <div style={{ padding: 16, background: '#f5f5f5', borderRadius: 8, marginBottom: 24 }}>
-          <div style={{ fontSize: 14, color: '#666' }}>
+        <div className="on-clock-banner">
+          <div className="pick-meta">
             Pick #{session.current_pick_index + 1} · Round {(currentPick?.round ?? 0) + 1}
           </div>
-          <div style={{ fontSize: 24, fontWeight: 700 }}>
-            On the clock: {currentTeam?.name ?? '—'}
-          </div>
+          <div className="pick-team">{currentTeam?.name ?? '—'}</div>
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32 }}>
+      <div className="draft-columns">
         <div>
-          <h2>Available Players ({availablePlayers.length})</h2>
-          {availablePlayers.map((r) => {
-            const evaluation = evalByPerson.get(r.person_id);
-            return (
-              <div
-                key={r.id}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  padding: '8px 0',
-                  borderBottom: '1px solid #eee',
-                }}
-              >
-                <div>
-                  {r.people.first_name} {r.people.last_name}
-                  {evaluation?.overall_rating != null && (
-                    <span style={{ color: '#999', fontSize: 13 }}> · rating {evaluation.overall_rating}</span>
+          <h3 style={{ fontWeight: 800 }}>Available Players ({availablePlayers.length})</h3>
+          <div className="data-table-card">
+            {availablePlayers.map((r) => {
+              const evaluation = evalByPerson.get(r.person_id);
+              return (
+                <div key={r.id} className="player-row">
+                  <div>
+                    {r.people.first_name} {r.people.last_name}
+                    {evaluation?.overall_rating != null && (
+                      <span style={{ color: 'var(--gray)', fontSize: 13 }}> · rating {evaluation.overall_rating}</span>
+                    )}
+                  </div>
+                  {session.status === 'live' && (
+                    <button onClick={() => handleDraft(r.person_id)} disabled={pickingId !== null} className="btn-small">
+                      {pickingId === r.person_id ? 'Drafting…' : 'Draft'}
+                    </button>
                   )}
                 </div>
-                {session.status === 'live' && (
-                  <button
-                    onClick={() => handleDraft(r.person_id)}
-                    disabled={pickingId !== null}
-                    style={{ fontSize: 13 }}
-                  >
-                    {pickingId === r.person_id ? 'Drafting…' : 'Draft'}
-                  </button>
-                )}
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
 
         <div>
-          <h2>Rosters</h2>
+          <h3 style={{ fontWeight: 800 }}>Rosters</h3>
           {teams.map((team) => {
             const teamPicks = picks.filter((p) => p.team_id === team.id).sort((a, b) => a.pick_number - b.pick_number);
             return (
-              <div key={team.id} style={{ marginBottom: 16 }}>
-                <strong>{team.name}</strong>
-                {teamPicks.length === 0 && <div style={{ color: '#999', fontSize: 13 }}>No picks yet</div>}
+              <div key={team.id} className="roster-group">
+                <h4>{team.name}</h4>
+                {teamPicks.length === 0 && <div style={{ color: 'var(--gray)', fontSize: 13 }}>No picks yet</div>}
                 {teamPicks.map((p) => {
                   const reg = registrations.find((r) => r.person_id === p.person_id);
                   return (
-                    <div key={p.id} style={{ fontSize: 14, paddingLeft: 12 }}>
+                    <div key={p.id} className="roster-pick">
                       #{p.pick_number} — {reg?.people.first_name} {reg?.people.last_name}
                     </div>
                   );
@@ -269,7 +248,7 @@ export default function DraftBoard({
       </div>
 
       {picks.length > 0 && (
-        <button onClick={handleUndo} style={{ marginTop: 24, fontSize: 13, color: '#a00' }}>
+        <button onClick={handleUndo} className="btn-small" style={{ marginTop: 20 }}>
           Undo last pick
         </button>
       )}
@@ -333,49 +312,38 @@ function DraftSetup({
   }
 
   if (teams.length === 0) {
-    return (
-      <div style={{ maxWidth: 480, margin: '80px auto', fontFamily: 'system-ui' }}>
-        <p style={{ color: '#666' }}>
-          No teams exist in {divisionName} yet. Create teams for this division before starting a draft.
-        </p>
-      </div>
-    );
+    return <p style={{ color: 'var(--gray)' }}>No teams exist in {divisionName} yet.</p>;
   }
 
   return (
-    <div style={{ maxWidth: 480, margin: '40px auto', fontFamily: 'system-ui', padding: '0 20px' }}>
-      <h1>Set up draft — {divisionName}</h1>
-
-      <h3>Round 1 pick order</h3>
-      <p style={{ fontSize: 13, color: '#666' }}>Snake draft — this order reverses each round.</p>
+    <div className="form-card" style={{ maxWidth: 420 }}>
+      <h2>Round 1 pick order</h2>
+      <p style={{ fontSize: 13, color: 'var(--gray)', marginTop: -12 }}>Snake draft — reverses each round.</p>
 
       {order.map((teamId, i) => {
         const team = teams.find((t) => t.id === teamId);
         return (
-          <div key={teamId} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
-            <span style={{ width: 24 }}>{i + 1}.</span>
-            <span style={{ flex: 1 }}>{team?.name}</span>
-            <button onClick={() => moveTeam(i, -1)} disabled={i === 0}>↑</button>
-            <button onClick={() => moveTeam(i, 1)} disabled={i === order.length - 1}>↓</button>
+          <div key={teamId} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
+            <span style={{ width: 24, color: 'var(--gray)' }}>{i + 1}.</span>
+            <span style={{ flex: 1, fontWeight: 600 }}>{team?.name}</span>
+            <button onClick={() => moveTeam(i, -1)} disabled={i === 0} className="btn-small">↑</button>
+            <button onClick={() => moveTeam(i, 1)} disabled={i === order.length - 1} className="btn-small">↓</button>
           </div>
         );
       })}
 
-      <div style={{ marginTop: 16 }}>
-        <label>
-          Total rounds (optional — leave blank to draft until player pool is empty):{' '}
-          <input
-            type="number"
-            value={totalRounds}
-            onChange={(e) => setTotalRounds(e.target.value)}
-            style={{ width: 60 }}
-          />
-        </label>
-      </div>
+      <label className="form-label" style={{ marginTop: 16 }}>Total rounds (optional)</label>
+      <input
+        type="number"
+        value={totalRounds}
+        onChange={(e) => setTotalRounds(e.target.value)}
+        className="form-input"
+        placeholder="Draft until pool is empty"
+      />
 
-      {error && <p style={{ color: 'red' }}>{error}</p>}
+      {error && <p style={{ color: '#B23A2E' }}>{error}</p>}
 
-      <button onClick={handleStart} disabled={starting} style={{ marginTop: 16 }}>
+      <button onClick={handleStart} disabled={starting} className="btn-primary" style={{ width: '100%' }}>
         {starting ? 'Starting…' : 'Start draft'}
       </button>
     </div>

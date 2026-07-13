@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getCurrentUserMemberships } from '@/lib/org-context';
 import { redirect } from 'next/navigation';
 import ScheduleBuilder from './schedule-builder';
+import Nav from '@/components/nav';
 
 export default async function AdminSchedulePage() {
   const supabase = await createClient();
@@ -20,8 +21,11 @@ export default async function AdminSchedulePage() {
 
   if (adminOrgs.length === 0) {
     return (
-      <div style={{ maxWidth: 480, margin: '80px auto', fontFamily: 'system-ui' }}>
-        <p style={{ color: '#666' }}>You're not an admin of any organization.</p>
+      <div className="admin-page">
+        <Nav />
+        <div className="empty-state" style={{ marginTop: 80 }}>
+          <p>You're not an admin of any organization.</p>
+        </div>
       </div>
     );
   }
@@ -51,12 +55,21 @@ export default async function AdminSchedulePage() {
     .order('start_time', { ascending: true });
 
   return (
-    <ScheduleBuilder
-      organizationId={org.organizationId}
-      organizationName={org.organizationName}
-      seasons={seasons ?? []}
-      teams={(teams as any) ?? []}
-      initialEvents={events ?? []}
-    />
+    <div className="admin-page">
+      <Nav />
+      <div className="admin-header">
+        <h1>Schedule</h1>
+        <p>{org.organizationName}</p>
+      </div>
+      <div className="admin-body">
+        <ScheduleBuilder
+          organizationId={org.organizationId}
+          organizationName={org.organizationName}
+          seasons={seasons ?? []}
+          teams={(teams as any) ?? []}
+          initialEvents={events ?? []}
+        />
+      </div>
+    </div>
   );
 }

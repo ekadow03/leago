@@ -2,6 +2,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import ComplianceUploadForm from './compliance-upload-form';
+import Nav from '@/components/nav';
 
 export default async function CompliancePage() {
   const supabase = await createClient();
@@ -22,8 +23,11 @@ export default async function CompliancePage() {
 
   if (!person) {
     return (
-      <div style={{ maxWidth: 480, margin: '80px auto', fontFamily: 'system-ui' }}>
-        <p style={{ color: 'red' }}>No profile found for your account.</p>
+      <div className="admin-page">
+        <Nav />
+        <div className="empty-state" style={{ marginTop: 80 }}>
+          <p>No profile found for your account.</p>
+        </div>
       </div>
     );
   }
@@ -40,29 +44,27 @@ export default async function CompliancePage() {
     .eq('person_id', person.id);
 
   return (
-    <div style={{ maxWidth: 600, margin: '40px auto', fontFamily: 'system-ui', padding: '0 20px' }}>
-      <h1>My compliance status</h1>
+    <div className="admin-page">
+      <Nav />
+      <div className="admin-header">
+        <h1>My compliance status</h1>
+      </div>
+      <div className="admin-body">
+        {(!memberships || memberships.length === 0) && (
+          <p style={{ color: 'var(--gray)' }}>You're not a member of any organization yet.</p>
+        )}
 
-      {(!memberships || memberships.length === 0) && (
-        <p style={{ color: '#666' }}>
-          You're not a member of any organization yet, so there's nothing to
-          track here.
-        </p>
-      )}
-
-      {memberships?.map((m: any) => (
-        <div key={m.organization_id} style={{ marginBottom: 32, border: '1px solid #ddd', borderRadius: 8, padding: 16 }}>
-          <h2 style={{ marginTop: 0 }}>{m.organizations?.name}</h2>
-
-          <ComplianceUploadForm
-            personId={person.id}
-            organizationId={m.organization_id}
-            existingRecords={
-              (records ?? []).filter((r) => r.organization_id === m.organization_id)
-            }
-          />
-        </div>
-      ))}
+        {memberships?.map((m: any) => (
+          <div key={m.organization_id} className="list-item-card">
+            <h3>{m.organizations?.name}</h3>
+            <ComplianceUploadForm
+              personId={person.id}
+              organizationId={m.organization_id}
+              existingRecords={(records ?? []).filter((r) => r.organization_id === m.organization_id)}
+            />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

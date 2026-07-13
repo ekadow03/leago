@@ -86,88 +86,73 @@ export default function TournamentAdmin({
     typeof window !== 'undefined' ? `${window.location.origin}/tournaments/${tournament.slug}` : '';
 
   return (
-    <div style={{ maxWidth: 800, margin: '40px auto', fontFamily: 'system-ui', padding: '0 20px' }}>
-      <h1>{tournament.name}</h1>
-      <p style={{ color: '#666' }}>
-        Status: <strong>{status}</strong> · Entry fee: ${(tournament.entry_fee_cents / 100).toFixed(2)}
-      </p>
+    <div>
+      {error && <p style={{ color: '#B23A2E', marginBottom: 12 }}>{error}</p>}
 
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-
-      <div style={{ marginBottom: 24 }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 24, flexWrap: 'wrap' }}>
+        <span className={`status-badge ${status === 'complete' ? 'confirmed' : 'pending'}`}>{status}</span>
         {status === 'draft' && (
-          <button onClick={() => handleStatusChange('registration_open')} disabled={busy}>
+          <button onClick={() => handleStatusChange('registration_open')} disabled={busy} className="btn-small">
             Open registration
           </button>
         )}
         {status === 'registration_open' && (
           <>
-            <button onClick={() => handleStatusChange('registration_closed')} disabled={busy} style={{ marginRight: 8 }}>
+            <button onClick={() => handleStatusChange('registration_closed')} disabled={busy} className="btn-small">
               Close registration
             </button>
-            <span style={{ fontSize: 13, color: '#666' }}>
+            <span style={{ fontSize: 13, color: 'var(--gray)' }}>
               Public link: <code>{registrationUrl}</code>
             </span>
           </>
         )}
-        {(status === 'registration_closed') && matches.length === 0 && (
-          <button onClick={handleGenerateBracket} disabled={busy || confirmedTeams.length < 2}>
-            {busy ? 'Generating…' : `Generate bracket (${confirmedTeams.length} confirmed teams)`}
+        {status === 'registration_closed' && matches.length === 0 && (
+          <button onClick={handleGenerateBracket} disabled={busy || confirmedTeams.length < 2} className="btn-primary">
+            {busy ? 'Generating…' : `Generate bracket (${confirmedTeams.length} teams)`}
           </button>
         )}
       </div>
 
-      <h2>Teams ({teams.length})</h2>
-      {teams.length === 0 && <p style={{ color: '#666' }}>No teams registered yet.</p>}
-      {teams.map((t) => (
-        <div key={t.id} style={{ padding: '6px 0', borderBottom: '1px solid #eee', fontSize: 14 }}>
-          <strong>{t.team_name}</strong> — {t.contact_name} ({t.contact_email}){' '}
-          <span style={{ color: '#999' }}>
-            [{t.status} / {t.payment_status}]
-          </span>
+      <h3 style={{ fontWeight: 800 }}>Teams ({teams.length})</h3>
+      {teams.length === 0 && <p style={{ color: 'var(--gray)' }}>No teams registered yet.</p>}
+      {teams.length > 0 && (
+        <div className="data-table-card" style={{ marginBottom: 32 }}>
+          {teams.map((t) => (
+            <div key={t.id} className="data-row">
+              <div>
+                <div className="data-row-name">{t.team_name}</div>
+                <div className="data-row-meta">
+                  {t.contact_name} · {t.contact_email}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <span className={`status-badge ${t.status}`}>{t.status}</span>
+                <span className={`status-badge ${t.payment_status}`}>{t.payment_status}</span>
+              </div>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
 
       {matches.length > 0 && (
         <>
-          <h2 style={{ marginTop: 32 }}>Bracket</h2>
-          <BracketView
-            organizationId={organizationId}
-            matches={matches}
-            setMatches={setMatches}
-            teamName={teamName}
-          />
+          <h3 style={{ fontWeight: 800 }}>Bracket</h3>
+          <div className="bracket-columns">
+            {Array.from(new Set(matches.map((m) => m.round)))
+              .sort((a, b) => a - b)
+              .map((round) => (
+                <div key={round}>
+                  <h4 style={{ fontWeight: 700, fontSize: 14 }}>Round {round}</h4>
+                  {matches
+                    .filter((m) => m.round === round)
+                    .map((m) => (
+                      <MatchRow key={m.id} organizationId={organizationId} match={m} teamName={teamName} />
+                    ))}
+                </div>
+              ))}
+          </div>
         </>
       )}
-    </div>
-  );
-}
-
-function BracketView({
-  organizationId,
-  matches,
-  setMatches,
-  teamName,
-}: {
-  organizationId: string;
-  matches: Match[];
-  setMatches: React.Dispatch<React.SetStateAction<Match[]>>;
-  teamName: (id: string | null) => string;
-}) {
-  const rounds = Array.from(new Set(matches.map((m) => m.round))).sort((a, b) => a - b);
-
-  return (
-    <div style={{ display: 'flex', gap: 32, overflowX: 'auto' }}>
-      {rounds.map((round) => (
-        <div key={round}>
-          <h4>Round {round}</h4>
-          {matches
-            .filter((m) => m.round === round)
-            .map((m) => (
-              <MatchRow key={m.id} organizationId={organizationId} match={m} teamName={teamName} setMatches={setMatches} />
-            ))}
-        </div>
-      ))}
     </div>
   );
 }
@@ -176,12 +161,10 @@ function MatchRow({
   organizationId,
   match,
   teamName,
-  setMatches,
 }: {
   organizationId: string;
   match: Match;
   teamName: (id: string | null) => string;
-  setMatches: React.Dispatch<React.SetStateAction<Match[]>>;
 }) {
   const [score1, setScore1] = useState(match.score_team1?.toString() ?? '');
   const [score2, setScore2] = useState(match.score_team2?.toString() ?? '');
@@ -203,26 +186,26 @@ function MatchRow({
   }
 
   return (
-    <div style={{ border: '1px solid #ddd', borderRadius: 6, padding: 8, marginBottom: 12, width: 200 }}>
-      <div style={{ fontSize: 13 }}>{teamName(match.team1_id)}</div>
-      <div style={{ fontSize: 13 }}>{teamName(match.team2_id)}</div>
+    <div className="bracket-match">
+      <div className="team-line">{teamName(match.team1_id)}</div>
+      <div className="team-line">{teamName(match.team2_id)}</div>
 
       {match.status === 'complete' ? (
-        <div style={{ fontSize: 12, color: 'green', marginTop: 4 }}>
-          {match.score_team1}–{match.score_team2} · Winner: {teamName(match.winner_team_id)}
+        <div className="bracket-score">
+          {match.score_team1}–{match.score_team2} · {teamName(match.winner_team_id)}
         </div>
       ) : canEnterScore ? (
-        <div style={{ marginTop: 4, display: 'flex', gap: 4, alignItems: 'center' }}>
-          <input type="number" value={score1} onChange={(e) => setScore1(e.target.value)} style={{ width: 40, fontSize: 12 }} />
-          <input type="number" value={score2} onChange={(e) => setScore2(e.target.value)} style={{ width: 40, fontSize: 12 }} />
-          <button onClick={handleSubmit} disabled={submitting || !score1 || !score2} style={{ fontSize: 11 }}>
+        <div style={{ marginTop: 8, display: 'flex', gap: 4, alignItems: 'center' }}>
+          <input type="number" value={score1} onChange={(e) => setScore1(e.target.value)} className="form-input" style={{ width: 44, padding: 6, marginBottom: 0, fontSize: 12 }} />
+          <input type="number" value={score2} onChange={(e) => setScore2(e.target.value)} className="form-input" style={{ width: 44, padding: 6, marginBottom: 0, fontSize: 12 }} />
+          <button onClick={handleSubmit} disabled={submitting || !score1 || !score2} className="btn-small">
             Save
           </button>
         </div>
       ) : (
-        <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>Waiting for teams</div>
+        <div style={{ fontSize: 12, color: 'var(--gray)', marginTop: 6 }}>Waiting for teams</div>
       )}
-      {error && <div style={{ fontSize: 11, color: 'red' }}>{error}</div>}
+      {error && <div style={{ fontSize: 11, color: '#B23A2E' }}>{error}</div>}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getCurrentUserMemberships } from '@/lib/org-context';
 import { redirect } from 'next/navigation';
 import TournamentsList from './tournaments-list';
+import Nav from '@/components/nav';
 
 export default async function AdminTournamentsPage() {
   const supabase = await createClient();
@@ -20,8 +21,11 @@ export default async function AdminTournamentsPage() {
 
   if (adminOrgs.length === 0) {
     return (
-      <div style={{ maxWidth: 480, margin: '80px auto', fontFamily: 'system-ui' }}>
-        <p style={{ color: '#666' }}>You're not an admin of any organization.</p>
+      <div className="admin-page">
+        <Nav />
+        <div className="empty-state" style={{ marginTop: 80 }}>
+          <p>You're not an admin of any organization.</p>
+        </div>
       </div>
     );
   }
@@ -35,10 +39,19 @@ export default async function AdminTournamentsPage() {
     .order('created_at', { ascending: false });
 
   return (
-    <TournamentsList
-      organizationId={org.organizationId}
-      organizationName={org.organizationName}
-      initialTournaments={tournaments ?? []}
-    />
+    <div className="admin-page">
+      <Nav />
+      <div className="admin-header">
+        <h1>Tournaments</h1>
+        <p>{org.organizationName}</p>
+      </div>
+      <div className="admin-body">
+        <TournamentsList
+          organizationId={org.organizationId}
+          organizationName={org.organizationName}
+          initialTournaments={tournaments ?? []}
+        />
+      </div>
+    </div>
   );
 }

@@ -58,6 +58,7 @@ export default function ScheduleBuilder({
   const [homeTeamId, setHomeTeamId] = useState('');
   const [awayTeamId, setAwayTeamId] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [showForm, setShowForm] = useState(false);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -93,6 +94,7 @@ export default function ScheduleBuilder({
       setStartTime('');
       setHomeTeamId('');
       setAwayTeamId('');
+      setShowForm(false);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -140,53 +142,51 @@ export default function ScheduleBuilder({
   }
 
   return (
-    <div style={{ maxWidth: 800, margin: '40px auto', fontFamily: 'system-ui', padding: '0 20px' }}>
-      <h1>{organizationName} — Schedule</h1>
-
-      {error && <p style={{ color: 'red' }}>{error}</p>}
+    <div>
+      {error && <p style={{ color: '#B23A2E', marginBottom: 12 }}>{error}</p>}
 
       {seasons.length === 0 ? (
-        <p style={{ color: '#666' }}>No seasons exist yet — create one first.</p>
+        <p style={{ color: 'var(--gray)' }}>No seasons exist yet — create one first.</p>
       ) : (
         <>
-          <div style={{ marginBottom: 16 }}>
-            <label>
-              Season:{' '}
-              <select value={selectedSeasonId} onChange={(e) => setSelectedSeasonId(e.target.value)}>
-                {seasons.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button onClick={handlePublishAll} style={{ marginLeft: 12 }}>
-              Publish all draft events for this season
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 20 }}>
+            <select value={selectedSeasonId} onChange={(e) => setSelectedSeasonId(e.target.value)} className="form-input" style={{ marginBottom: 0, width: 'auto' }}>
+              {seasons.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+            <button onClick={handlePublishAll} className="btn-small">
+              Publish all drafts
+            </button>
+            <button onClick={() => setShowForm((s) => !s)} className="btn-small" style={{ marginLeft: 'auto' }}>
+              {showForm ? 'Cancel' : '+ Add event'}
             </button>
           </div>
 
-          <form onSubmit={handleCreate} style={{ border: '1px solid #ddd', borderRadius: 8, padding: 16, marginBottom: 24 }}>
-            <h3 style={{ marginTop: 0 }}>Add event</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <select value={type} onChange={(e) => setType(e.target.value as any)}>
+          {showForm && (
+            <form onSubmit={handleCreate} className="form-card" style={{ marginBottom: 24 }}>
+              <select value={type} onChange={(e) => setType(e.target.value as any)} className="form-input">
                 {EVENT_TYPES.map((t) => (
                   <option key={t.value} value={t.value}>
                     {t.label}
                   </option>
                 ))}
               </select>
-              <input placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} required />
-              <input placeholder="Location" value={location} onChange={(e) => setLocation(e.target.value)} />
+              <input placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} className="form-input" required />
+              <input placeholder="Location" value={location} onChange={(e) => setLocation(e.target.value)} className="form-input" />
               <input
                 type="datetime-local"
                 value={startTime}
                 onChange={(e) => setStartTime(e.target.value)}
+                className="form-input"
                 required
               />
 
               {type === 'game' && (
                 <>
-                  <select value={homeTeamId} onChange={(e) => setHomeTeamId(e.target.value)}>
+                  <select value={homeTeamId} onChange={(e) => setHomeTeamId(e.target.value)} className="form-input">
                     <option value="">Home team…</option>
                     {teams.map((t) => (
                       <option key={t.id} value={t.id}>
@@ -194,7 +194,7 @@ export default function ScheduleBuilder({
                       </option>
                     ))}
                   </select>
-                  <select value={awayTeamId} onChange={(e) => setAwayTeamId(e.target.value)}>
+                  <select value={awayTeamId} onChange={(e) => setAwayTeamId(e.target.value)} className="form-input">
                     <option value="">Away team…</option>
                     {teams.map((t) => (
                       <option key={t.id} value={t.id}>
@@ -205,62 +205,50 @@ export default function ScheduleBuilder({
                 </>
               )}
 
-              <button type="submit" disabled={submitting}>
+              <button type="submit" disabled={submitting} className="btn-primary" style={{ width: '100%' }}>
                 {submitting ? 'Adding…' : 'Add event'}
               </button>
-            </div>
-          </form>
+            </form>
+          )}
 
-          <h3>Events</h3>
-          {events.length === 0 && <p style={{ color: '#666' }}>No events yet.</p>}
-          {events.map((ev) => (
-            <div
-              key={ev.id}
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                padding: '8px 0',
-                borderBottom: '1px solid #eee',
-              }}
-            >
-              <div>
-                <strong>{ev.title}</strong>{' '}
-                <span style={{ fontSize: 13, color: '#999' }}>({ev.type})</span>
-                {ev.type === 'game' && (ev.home_team_id || ev.away_team_id) && (
-                  <div style={{ fontSize: 13, color: '#666' }}>
-                    {teamName(ev.home_team_id)} vs {teamName(ev.away_team_id)}
+          {events.length === 0 && <p style={{ color: 'var(--gray)' }}>No events yet.</p>}
+          {events.length > 0 && (
+            <div className="data-table-card">
+              {events.map((ev) => (
+                <div key={ev.id} className="data-row">
+                  <div>
+                    <div className="data-row-name">
+                      {ev.title}
+                      {ev.type === 'game' && (ev.home_team_id || ev.away_team_id) && (
+                        <span> — {teamName(ev.home_team_id)} vs {teamName(ev.away_team_id)}</span>
+                      )}
+                    </div>
+                    <div className="data-row-meta">
+                      {new Date(ev.start_time).toLocaleString()} {ev.location && `· ${ev.location}`}
+                    </div>
                   </div>
-                )}
-                <div style={{ fontSize: 13, color: '#666' }}>
-                  {new Date(ev.start_time).toLocaleString()} {ev.location && `· ${ev.location}`}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span className={`status-badge ${ev.status === 'published' ? 'confirmed' : ev.status === 'canceled' ? 'canceled' : 'pending'}`}>
+                      {ev.status}
+                    </span>
+                    {ev.status !== 'published' && (
+                      <button onClick={() => handleToggleStatus(ev.id, 'published')} className="btn-small">
+                        Publish
+                      </button>
+                    )}
+                    {ev.status === 'published' && (
+                      <button onClick={() => handleToggleStatus(ev.id, 'draft')} className="btn-small">
+                        Unpublish
+                      </button>
+                    )}
+                    <button onClick={() => handleDelete(ev.id)} className="btn-small">
+                      Delete
+                    </button>
+                  </div>
                 </div>
-                <span
-                  style={{
-                    fontSize: 12,
-                    color: ev.status === 'published' ? 'green' : ev.status === 'canceled' ? 'red' : '#b8860b',
-                  }}
-                >
-                  {ev.status}
-                </span>
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                {ev.status !== 'published' && (
-                  <button onClick={() => handleToggleStatus(ev.id, 'published')} style={{ fontSize: 12 }}>
-                    Publish
-                  </button>
-                )}
-                {ev.status === 'published' && (
-                  <button onClick={() => handleToggleStatus(ev.id, 'draft')} style={{ fontSize: 12 }}>
-                    Unpublish
-                  </button>
-                )}
-                <button onClick={() => handleDelete(ev.id)} style={{ fontSize: 12, color: '#a00' }}>
-                  Delete
-                </button>
-              </div>
+              ))}
             </div>
-          ))}
+          )}
         </>
       )}
     </div>
