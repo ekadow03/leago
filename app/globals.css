@@ -316,3 +316,63 @@ select:focus-visible {
   font-weight: 700;
   text-decoration: none;
 }
+
+/* ---------------------------------------------------------------- */
+/* Schedule                                                           */
+/* ---------------------------------------------------------------- */
+.schedule-body {
+  max-width: 700px;
+  margin: -40px auto 64px;
+  padding: 0 24px;
+  position: relative;
+  z-index: 1;
+}
+
+.schedule-day {
+  background: var(--white);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 20px rgba(11, 19, 43, 0.08);
+  padding: 20px 24px;
+  margin-bottom: 16px;
+}
+
+.schedule-day h3 {
+  font-weight: 800;
+  font-size: 15px;
+  margin: 0 0 12px;
+  color: var(--blue);
+}
+
+.schedule-event {
+  padding: 10px 0;
+  border-top: 1px solid var(--gray-light);
+}
+
+.schedule-event:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+.schedule-event-title {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.schedule-event-meta {
+  font-size: 13px;
+  color: var(--gray);
+  margin-top: 2px;
+}
+
+.event-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.1);
+  color: var(--blue);
+  margin-left: 8px;
+}

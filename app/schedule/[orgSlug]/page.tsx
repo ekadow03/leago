@@ -1,10 +1,10 @@
 // app/schedule/[orgSlug]/page.tsx
 //
 // Public — no auth required. Relies on the "public can read published
-// events" RLS policy (0009_events_and_schedule.sql) plus organizations
-// being publicly readable (0003_public_registration_visibility.sql).
+// events" RLS policy plus organizations being publicly readable.
 
 import { createClient } from '@/lib/supabase/server';
+import Nav from '@/components/nav';
 
 export default async function PublicSchedulePage({
   params,
@@ -22,8 +22,11 @@ export default async function PublicSchedulePage({
 
   if (!org) {
     return (
-      <div style={{ maxWidth: 480, margin: '80px auto', fontFamily: 'system-ui' }}>
-        <p>League not found.</p>
+      <div>
+        <Nav />
+        <div style={{ maxWidth: 480, margin: '80px auto', textAlign: 'center' }}>
+          <p>League not found.</p>
+        </div>
       </div>
     );
   }
@@ -53,33 +56,42 @@ export default async function PublicSchedulePage({
   });
 
   return (
-    <div style={{ maxWidth: 700, margin: '40px auto', fontFamily: 'system-ui', padding: '0 20px' }}>
-      <h1>{org.name} — Schedule</h1>
+    <div>
+      <Nav />
+      <div className="hero-band" style={{ paddingBottom: 56 }}>
+        <p className="hero-eyebrow">{org.name}</p>
+        <h1 className="hero-title">
+          Season <span className="accent">schedule</span>
+        </h1>
+      </div>
 
-      {(!events || events.length === 0) && (
-        <p style={{ color: '#666' }}>No games or events have been published yet. Check back soon.</p>
-      )}
+      <div className="schedule-body">
+        {(!events || events.length === 0) && (
+          <div className="empty-state">
+            <p>No games or events have been published yet. Check back soon.</p>
+          </div>
+        )}
 
-      {Array.from(grouped.entries()).map(([day, dayEvents]) => (
-        <div key={day} style={{ marginBottom: 24 }}>
-          <h3 style={{ borderBottom: '1px solid #ddd', paddingBottom: 4 }}>{day}</h3>
-          {dayEvents.map((ev: any) => (
-            <div key={ev.id} style={{ padding: '8px 0' }}>
-              <div style={{ fontWeight: 600 }}>
-                {ev.type === 'game' && ev.home_team && ev.away_team
-                  ? `${ev.home_team.name} vs ${ev.away_team.name}`
-                  : ev.title}
+        {Array.from(grouped.entries()).map(([day, dayEvents]) => (
+          <div key={day} className="schedule-day">
+            <h3>{day}</h3>
+            {dayEvents.map((ev: any) => (
+              <div key={ev.id} className="schedule-event">
+                <div className="schedule-event-title">
+                  {ev.type === 'game' && ev.home_team && ev.away_team
+                    ? `${ev.home_team.name} vs ${ev.away_team.name}`
+                    : ev.title}
+                  <span className="event-badge">{ev.type.replace('_', ' ')}</span>
+                </div>
+                <div className="schedule-event-meta">
+                  {new Date(ev.start_time).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                  {ev.location && ` · ${ev.location}`}
+                </div>
               </div>
-              <div style={{ fontSize: 14, color: '#666' }}>
-                {new Date(ev.start_time).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
-                {ev.location && ` · ${ev.location}`}
-                {' · '}
-                <span style={{ textTransform: 'capitalize' }}>{ev.type.replace('_', ' ')}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      ))}
+            ))}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
