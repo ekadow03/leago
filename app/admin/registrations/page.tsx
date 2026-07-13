@@ -1,14 +1,9 @@
 // app/admin/registrations/page.tsx
-//
-// Lists all registrations for the orgs the logged-in user admins, with
-// filtering by status and a refund action per row. Requires the user to be
-// an org admin (org-context.ts) — non-admins see an access-denied message
-// rather than an empty/broken table.
-
 import { createClient } from '@/lib/supabase/server';
 import { getCurrentUserMemberships } from '@/lib/org-context';
 import { redirect } from 'next/navigation';
 import RegistrationsTable from './registrations-table';
+import Nav from '@/components/nav';
 
 export default async function AdminRegistrationsPage() {
   const supabase = await createClient();
@@ -26,19 +21,15 @@ export default async function AdminRegistrationsPage() {
 
   if (adminOrgs.length === 0) {
     return (
-      <div style={{ maxWidth: 480, margin: '80px auto', fontFamily: 'system-ui' }}>
-        <h1>Admin dashboard</h1>
-        <p style={{ color: '#666' }}>
-          You're not an admin of any organization, so there's nothing to
-          manage here.
-        </p>
+      <div className="admin-page">
+        <Nav />
+        <div className="empty-state" style={{ marginTop: 80 }}>
+          <p>You're not an admin of any organization, so there's nothing to manage here.</p>
+        </div>
       </div>
     );
   }
 
-  // Single-org assumption for this first version — if the user admins
-  // multiple orgs, show the first one. A real org-switcher is a natural
-  // follow-up once there's more than one org to actually switch between.
   const org = adminOrgs[0];
 
   const { data: registrations, error } = await supabase
@@ -55,14 +46,22 @@ export default async function AdminRegistrationsPage() {
     .order('created_at', { ascending: false });
 
   return (
-    <div style={{ maxWidth: 900, margin: '40px auto', fontFamily: 'system-ui', padding: '0 20px' }}>
-      <h1>{org.organizationName} — Registrations</h1>
+    <div className="admin-page">
+      <Nav />
+      <div className="admin-header">
+        <h1>Registrations</h1>
+        <p>{org.organizationName}</p>
+      </div>
 
-      {error && <p style={{ color: 'red' }}>Failed to load: {error.message}</p>}
+      {error && (
+        <div className="admin-body">
+          <p style={{ color: '#B23A2E' }}>Failed to load: {error.message}</p>
+        </div>
+      )}
 
-      <RegistrationsTable
-        initialRegistrations={(registrations as any) ?? []}
-      />
+      <div className="admin-body">
+        <RegistrationsTable initialRegistrations={(registrations as any) ?? []} />
+      </div>
     </div>
   );
 }

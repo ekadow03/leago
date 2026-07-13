@@ -80,82 +80,57 @@ export default function RegistrationsTable({
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
+      <div className="filter-row">
         {(['all', 'pending', 'confirmed', 'waitlisted', 'canceled'] as const).map((s) => (
           <button
             key={s}
             onClick={() => setFilter(s)}
-            style={{
-              marginRight: 8,
-              fontWeight: filter === s ? 700 : 400,
-              textDecoration: filter === s ? 'underline' : 'none',
-            }}
+            className={`filter-pill ${filter === s ? 'active' : ''}`}
           >
             {s.charAt(0).toUpperCase() + s.slice(1)}
           </button>
         ))}
       </div>
 
-      {refundError && <p style={{ color: 'red' }}>{refundError}</p>}
+      {refundError && <p style={{ color: '#B23A2E', marginBottom: 12 }}>{refundError}</p>}
 
-      {filtered.length === 0 && <p style={{ color: '#666' }}>No registrations match this filter.</p>}
+      {filtered.length === 0 && <p style={{ color: 'var(--gray)' }}>No registrations match this filter.</p>}
 
       {filtered.length > 0 && (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ textAlign: 'left', borderBottom: '2px solid #ddd' }}>
-              <th style={{ padding: 8 }}>Name</th>
-              <th style={{ padding: 8 }}>Type</th>
-              <th style={{ padding: 8 }}>Season</th>
-              <th style={{ padding: 8 }}>Status</th>
-              <th style={{ padding: 8 }}>Payment</th>
-              <th style={{ padding: 8 }}>Amount</th>
-              <th style={{ padding: 8 }}>Registered</th>
-              <th style={{ padding: 8 }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((r) => {
-              const remaining = r.amount_cents - r.refunded_amount_cents;
-              const canRefund = r.payment_status === 'paid' || r.payment_status === 'partially_refunded';
+        <div className="data-table-card">
+          {filtered.map((r) => {
+            const remaining = r.amount_cents - r.refunded_amount_cents;
+            const canRefund = r.payment_status === 'paid' || r.payment_status === 'partially_refunded';
 
-              return (
-                <tr key={r.id} style={{ borderBottom: '1px solid #eee' }}>
-                  <td style={{ padding: 8 }}>
+            return (
+              <div key={r.id} className="data-row">
+                <div>
+                  <div className="data-row-name">
                     {r.person?.first_name} {r.person?.last_name}
-                    <div style={{ fontSize: 12, color: '#999' }}>{r.person?.email}</div>
-                  </td>
-                  <td style={{ padding: 8 }}>{r.registration_type}</td>
-                  <td style={{ padding: 8 }}>{r.season?.name}</td>
-                  <td style={{ padding: 8 }}>{r.status}</td>
-                  <td style={{ padding: 8 }}>
-                    {r.payment_status}
-                    {r.refunded_amount_cents > 0 && (
-                      <div style={{ fontSize: 12, color: '#999' }}>
-                        ${(r.refunded_amount_cents / 100).toFixed(2)} refunded
-                      </div>
-                    )}
-                  </td>
-                  <td style={{ padding: 8 }}>${(r.amount_cents / 100).toFixed(2)}</td>
-                  <td style={{ padding: 8, fontSize: 13, color: '#666' }}>
-                    {new Date(r.created_at).toLocaleDateString()}
-                  </td>
-                  <td style={{ padding: 8 }}>
-                    {canRefund && remaining > 0 && (
-                      <button
-                        onClick={() => handleRefund(r)}
-                        disabled={refundingId === r.id}
-                        style={{ fontSize: 13 }}
-                      >
-                        {refundingId === r.id ? 'Refunding…' : 'Refund'}
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                  </div>
+                  <div className="data-row-meta">
+                    {r.person?.email} · {r.registration_type} · {r.season?.name} · $
+                    {(r.amount_cents / 100).toFixed(2)}
+                    {r.refunded_amount_cents > 0 && ` (${(r.refunded_amount_cents / 100).toFixed(2)} refunded)`}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span className={`status-badge ${r.status}`}>{r.status}</span>
+                  <span className={`status-badge ${r.payment_status}`}>{r.payment_status}</span>
+                  {canRefund && remaining > 0 && (
+                    <button
+                      onClick={() => handleRefund(r)}
+                      disabled={refundingId === r.id}
+                      className="btn-small"
+                    >
+                      {refundingId === r.id ? 'Refunding…' : 'Refund'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
