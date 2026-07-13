@@ -145,7 +145,7 @@ export async function POST(req: NextRequest) {
 
         if (organizationId && tier) {
           const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-          const periodEnd = (subscription as any).current_period_end;
+          const periodEnd = subscription.items.data[0]?.current_period_end;
 
           await admin.from('platform_subscriptions').upsert(
             {
@@ -182,8 +182,8 @@ export async function POST(req: NextRequest) {
         .from('platform_subscriptions')
         .update({
           status,
-          current_period_end: (subscription as any).current_period_end
-            ? new Date((subscription as any).current_period_end * 1000).toISOString()
+          current_period_end: subscription.items.data[0]?.current_period_end
+            ? new Date(subscription.items.data[0].current_period_end * 1000).toISOString()
             : null,
         })
         .eq('stripe_subscription_id', subscription.id);
