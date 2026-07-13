@@ -283,3 +283,36 @@ select:focus-visible {
   font-size: 14px;
   color: var(--gray);
 }
+
+/* ---------------------------------------------------------------- */
+/* Auth pages                                                        */
+/* ---------------------------------------------------------------- */
+.auth-page {
+  min-height: 100vh;
+}
+
+.auth-body {
+  max-width: 400px;
+  margin: 0 auto;
+  padding: 64px 24px;
+}
+
+.auth-body h1 {
+  font-weight: 800;
+  font-size: 28px;
+  margin: 0 0 24px;
+  text-align: center;
+}
+
+.auth-footer {
+  text-align: center;
+  margin-top: 20px;
+  font-size: 14px;
+  color: var(--gray);
+}
+
+.auth-footer a {
+  color: var(--green-dark);
+  font-weight: 700;
+  text-decoration: none;
+}
