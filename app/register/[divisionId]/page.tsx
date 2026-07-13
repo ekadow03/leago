@@ -2,6 +2,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import RegistrationForm from './registration-form';
+import Nav from '@/components/nav';
 
 export default async function RegisterForDivisionPage({
   params,
@@ -35,11 +36,13 @@ export default async function RegisterForDivisionPage({
 
   if (error || !division) {
     return (
-      <div style={{ maxWidth: 480, margin: '80px auto', fontFamily: 'system-ui' }}>
-        <p style={{ color: 'red' }}>
-          This division isn't open for registration (it may have closed, or
-          the link is invalid).
-        </p>
+      <div>
+        <Nav />
+        <div style={{ maxWidth: 480, margin: '80px auto', textAlign: 'center' }}>
+          <p style={{ color: '#B23A2E' }}>
+            This division isn't open for registration (it may have closed, or the link is invalid).
+          </p>
+        </div>
       </div>
     );
   }
@@ -52,12 +55,11 @@ export default async function RegisterForDivisionPage({
 
   if (!person) {
     return (
-      <div style={{ maxWidth: 480, margin: '80px auto', fontFamily: 'system-ui' }}>
-        <p style={{ color: 'red' }}>
-          No profile found for your account. This shouldn't happen — contact
-          support. (Debug: sign-up may have failed to create the linked
-          `people` row.)
-        </p>
+      <div>
+        <Nav />
+        <div style={{ maxWidth: 480, margin: '80px auto', textAlign: 'center' }}>
+          <p style={{ color: '#B23A2E' }}>No profile found for your account. Contact support.</p>
+        </div>
       </div>
     );
   }
@@ -65,15 +67,25 @@ export default async function RegisterForDivisionPage({
   const d = division as any;
 
   return (
-    <RegistrationForm
-      divisionId={d.id}
-      divisionName={d.name}
-      seasonId={d.season.id}
-      seasonName={d.season.name}
-      organizationId={d.season.organization.id}
-      organizationName={d.season.organization.name}
-      priceCents={d.price_cents}
-      personId={person.id}
-    />
+    <div>
+      <Nav />
+      <div className="hero-band" style={{ paddingBottom: 56 }}>
+        <p className="hero-eyebrow">{d.season.organization.name}</p>
+        <h1 className="hero-title">{d.name}</h1>
+        <p className="hero-subtitle">{d.season.name}</p>
+      </div>
+      <div className="page-body">
+        <RegistrationForm
+          divisionId={d.id}
+          divisionName={d.name}
+          seasonId={d.season.id}
+          seasonName={d.season.name}
+          organizationId={d.season.organization.id}
+          organizationName={d.season.organization.name}
+          priceCents={d.price_cents}
+          personId={person.id}
+        />
+      </div>
+    </div>
   );
 }

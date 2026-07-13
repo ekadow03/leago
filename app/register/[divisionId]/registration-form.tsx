@@ -33,9 +33,6 @@ export default function RegistrationForm(props: Props) {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // Only "player" registrations are priced in this simple version — coach
-  // and volunteer sign-ups are free. Adjust here once real per-role pricing
-  // rules exist.
   const amountCents = registrationType === 'player' ? props.priceCents : 0;
 
   async function handleStart(e: React.FormEvent) {
@@ -66,11 +63,12 @@ export default function RegistrationForm(props: Props) {
 
   if (confirmedFree) {
     return (
-      <div style={{ maxWidth: 480, margin: '80px auto', fontFamily: 'system-ui' }}>
-        <h1>✅ Registration confirmed</h1>
-        <p>
-          You're registered as a {registrationType} for {props.divisionName} —{' '}
-          {props.seasonName}. No payment was required for this role.
+      <div className="form-card" style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
+        <h2>Registration confirmed</h2>
+        <p style={{ color: 'var(--gray)' }}>
+          You're registered as a {registrationType} for {props.divisionName} — {props.seasonName}.
+          No payment was required for this role.
         </p>
       </div>
     );
@@ -78,11 +76,10 @@ export default function RegistrationForm(props: Props) {
 
   if (clientSecret) {
     return (
-      <div style={{ maxWidth: 480, margin: '80px auto', fontFamily: 'system-ui' }}>
-        <h1>Payment</h1>
-        <p style={{ color: '#666' }}>
-          {props.divisionName} — {props.seasonName} · $
-          {(amountCents / 100).toFixed(2)}
+      <div className="form-card">
+        <h2>Payment</h2>
+        <p style={{ color: 'var(--gray)', marginTop: -12, marginBottom: 20 }}>
+          {props.divisionName} — {props.seasonName} · ${(amountCents / 100).toFixed(2)}
         </p>
         <Elements stripe={stripePromise} options={{ clientSecret }}>
           <PaymentForm />
@@ -92,42 +89,37 @@ export default function RegistrationForm(props: Props) {
   }
 
   return (
-    <div style={{ maxWidth: 480, margin: '80px auto', fontFamily: 'system-ui' }}>
-      <h1>{props.organizationName}</h1>
-      <p style={{ color: '#666' }}>
-        {props.seasonName} — {props.divisionName}
-      </p>
+    <form onSubmit={handleStart} className="form-card">
+      <h2>Registering as</h2>
 
-      <form onSubmit={handleStart} style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 24 }}>
-        <fieldset style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12 }}>
-          <legend>Registering as</legend>
-          {(['player', 'coach', 'volunteer'] as const).map((type) => (
-            <label key={type} style={{ display: 'block', padding: '4px 0' }}>
-              <input
-                type="radio"
-                name="registrationType"
-                value={type}
-                checked={registrationType === type}
-                onChange={() => setRegistrationType(type)}
-              />{' '}
-              {type.charAt(0).toUpperCase() + type.slice(1)}
-              {type === 'player' && ` — $${(props.priceCents / 100).toFixed(2)}`}
-              {type !== 'player' && ' — free'}
-            </label>
-          ))}
-        </fieldset>
+      {(['player', 'coach', 'volunteer'] as const).map((type) => (
+        <label key={type} className="radio-option">
+          <input
+            type="radio"
+            name="registrationType"
+            value={type}
+            checked={registrationType === type}
+            onChange={() => setRegistrationType(type)}
+          />
+          <span className="radio-option-label">
+            {type.charAt(0).toUpperCase() + type.slice(1)}
+          </span>
+          <span className="radio-option-price">
+            {type === 'player' ? `$${(props.priceCents / 100).toFixed(0)}` : 'Free'}
+          </span>
+        </label>
+      ))}
 
-        {error && <p style={{ color: 'red' }}>{error}</p>}
+      {error && <p style={{ color: '#B23A2E', fontSize: 14, marginTop: 12 }}>{error}</p>}
 
-        <button type="submit" disabled={submitting}>
-          {submitting
-            ? 'Please wait…'
-            : amountCents > 0
-              ? `Continue to payment ($${(amountCents / 100).toFixed(2)})`
-              : 'Complete registration'}
-        </button>
-      </form>
-    </div>
+      <button type="submit" disabled={submitting} className="btn-primary" style={{ width: '100%', marginTop: 16 }}>
+        {submitting
+          ? 'Please wait…'
+          : amountCents > 0
+            ? `Continue to payment ($${(amountCents / 100).toFixed(2)})`
+            : 'Complete registration'}
+      </button>
+    </form>
   );
 }
 
@@ -163,19 +155,27 @@ function PaymentForm() {
 
   if (status === 'succeeded') {
     return (
-      <p style={{ color: 'green', marginTop: 16 }}>
-        ✅ Payment received — your registration is confirmed!
-      </p>
+      <div style={{ textAlign: 'center', padding: '20px 0' }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
+        <p style={{ color: 'var(--green-dark)', fontWeight: 700 }}>
+          Payment received — your registration is confirmed!
+        </p>
+      </div>
     );
   }
 
   return (
-    <form onSubmit={handleSubmit} style={{ marginTop: 16 }}>
+    <form onSubmit={handleSubmit} style={{ marginTop: 8 }}>
       <PaymentElement />
-      <button type="submit" disabled={!stripe || status === 'processing'} style={{ marginTop: 16 }}>
+      <button
+        type="submit"
+        disabled={!stripe || status === 'processing'}
+        className="btn-primary"
+        style={{ width: '100%', marginTop: 20 }}
+      >
         {status === 'processing' ? 'Processing…' : 'Pay now'}
       </button>
-      {status === 'error' && <p style={{ color: 'red', marginTop: 12 }}>{errorMessage}</p>}
+      {status === 'error' && <p style={{ color: '#B23A2E', marginTop: 12, fontSize: 14 }}>{errorMessage}</p>}
     </form>
   );
 }

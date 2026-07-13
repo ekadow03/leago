@@ -198,3 +198,88 @@ select:focus-visible {
   text-align: center;
   color: var(--gray);
 }
+
+/* ---------------------------------------------------------------- */
+/* Forms                                                              */
+/* ---------------------------------------------------------------- */
+.page-body {
+  max-width: 560px;
+  margin: -48px auto 64px;
+  padding: 0 24px;
+  position: relative;
+  z-index: 1;
+}
+
+.form-card {
+  background: var(--white);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 20px rgba(11, 19, 43, 0.08);
+  padding: 32px;
+}
+
+.form-card h2 {
+  font-weight: 800;
+  font-size: 20px;
+  margin: 0 0 20px;
+}
+
+.form-label {
+  display: block;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--gray);
+  margin-bottom: 6px;
+}
+
+.form-input {
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: 15px;
+  padding: 12px 14px;
+  border: 1.5px solid var(--gray-light);
+  border-radius: var(--radius-sm);
+  background: var(--gray-light);
+  color: var(--navy);
+  margin-bottom: 16px;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--green);
+  background: var(--white);
+}
+
+.radio-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1.5px solid var(--gray-light);
+  border-radius: var(--radius-sm);
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.radio-option:has(input:checked) {
+  border-color: var(--green);
+  background: rgba(34, 197, 94, 0.06);
+}
+
+.radio-option input {
+  accent-color: var(--green);
+  width: 18px;
+  height: 18px;
+}
+
+.radio-option-label {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.radio-option-price {
+  margin-left: auto;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--gray);
+}
