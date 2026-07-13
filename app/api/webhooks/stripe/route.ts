@@ -135,6 +135,68 @@ export async function POST(req: NextRequest) {
       break;
     }
 
+    case 'checkout.session.completed': {
+      const session = event.data.object as Stripe.Checkout.Session;
+      if (session.mode === 'subscription' && session.subscription) {
+        const subscriptionId =
+          typeof session.subscription === 'string' ? session.subscription : session.subscription.id;
+        const organizationId = session.metadata?.organization_id;
+        const tier = session.metadata?.tier;
+
+        if (organizationId && tier) {
+          const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+          const periodEnd = (subscription as any).current_period_end;
+
+          await admin.from('platform_subscriptions').upsert(
+            {
+              organization_id: organizationId,
+              stripe_subscription_id: subscriptionId,
+              tier,
+              status: 'active',
+              current_period_end: periodEnd ? new Date(periodEnd * 1000).toISOString() : null,
+            },
+            { onConflict: 'stripe_subscription_id' }
+          );
+
+          await admin
+            .from('organizations')
+            .update({ subscription_tier: tier, subscription_status: 'active' })
+            .eq('id', organizationId);
+        }
+      }
+      break;
+    }
+
+    case 'customer.subscription.updated':
+    case 'customer.subscription.deleted': {
+      const subscription = event.data.object as Stripe.Subscription;
+      const organizationId = subscription.metadata?.organization_id;
+
+      let status: 'active' | 'past_due' | 'canceled' | 'incomplete';
+      if (subscription.status === 'active' || subscription.status === 'trialing') status = 'active';
+      else if (subscription.status === 'past_due' || subscription.status === 'unpaid') status = 'past_due';
+      else if (subscription.status === 'canceled') status = 'canceled';
+      else status = 'incomplete';
+
+      await admin
+        .from('platform_subscriptions')
+        .update({
+          status,
+          current_period_end: (subscription as any).current_period_end
+            ? new Date((subscription as any).current_period_end * 1000).toISOString()
+            : null,
+        })
+        .eq('stripe_subscription_id', subscription.id);
+
+      if (organizationId) {
+        await admin
+          .from('organizations')
+          .update({ subscription_status: status })
+          .eq('id', organizationId);
+      }
+      break;
+    }
+
     default:
       break;
   }
