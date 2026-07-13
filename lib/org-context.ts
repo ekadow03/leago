@@ -38,7 +38,7 @@ export async function getCurrentUserMemberships(): Promise<OrgMembership[]> {
       organization_id,
       role,
       status,
-      people!inner ( id, auth_user_id ),
+      people!organization_members_person_id_fkey ( id, auth_user_id ),
       organizations!inner ( id, name, slug )
     `
     )

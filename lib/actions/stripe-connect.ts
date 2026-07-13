@@ -2,10 +2,12 @@
 
 // lib/actions/stripe-connect.ts
 // Onboards a league organization onto Stripe Connect so registration
-// payments can flow to them (minus the platform fee). Uses Standard
-// Connect accounts — the league has its own full Stripe dashboard access,
-// which matters for a youth sports org that needs to see/manage its own
-// payouts, tax forms, and disputes directly rather than only through us.
+// payments can flow to them (minus the platform fee). Uses Express Connect
+// accounts — Standard accounts get full Stripe Dashboard login access,
+// which requires the account holder to set up account-level security
+// (2FA) even in test mode. A youth sports league only needs to receive
+// payouts, not manage a full Stripe dashboard, so Express (lighter
+// dashboard, Stripe-hosted onboarding, no 2FA friction) is the better fit.
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOrgAdmin } from '@/lib/org-context';
@@ -34,7 +36,7 @@ export async function startStripeConnectOnboarding(
 
   if (!accountId) {
     const account = await stripe.accounts.create({
-      type: 'standard',
+      type: 'express',
       metadata: { organization_id: organizationId },
     });
     accountId = account.id;
