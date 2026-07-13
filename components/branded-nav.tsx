@@ -20,14 +20,27 @@ export default function BrandedNav({
 
   return (
     <nav className="nav" style={{ background: bg }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
         {branding?.logoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={branding.logoUrl} alt={organizationName} style={{ height: 28, width: 'auto' }} />
+          <img src={branding.logoUrl} alt={organizationName} style={{ height: 28, width: 'auto', flexShrink: 0 }} />
         ) : null}
-        <span style={{ fontWeight: 800, fontSize: 20, color: 'white' }}>{organizationName}</span>
+        <span
+          style={{
+            fontWeight: 800,
+            fontSize: 20,
+            color: 'white',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+        >
+          {organizationName}
+        </span>
       </div>
-      <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>Powered by leago</span>
+      <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', whiteSpace: 'nowrap', flexShrink: 0 }}>
+        Powered by leago
+      </span>
     </nav>
   );
 }
