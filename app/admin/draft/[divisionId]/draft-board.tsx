@@ -71,37 +71,67 @@ export default function DraftBoard({
   useEffect(() => {
     if (!session) return;
 
+    let isCancelled = false;
     const supabase = createClient();
-    const channel = supabase
-      .channel(`draft-${session.id}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'draft_picks', filter: `draft_session_id=eq.${session.id}` },
-        (payload) => {
-          setPicks((prev) => {
-            if (prev.some((p) => p.id === payload.new.id)) return prev;
-            return [...prev, payload.new as Pick].sort((a, b) => a.pick_number - b.pick_number);
-          });
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'DELETE', schema: 'public', table: 'draft_picks', filter: `draft_session_id=eq.${session.id}` },
-        (payload) => {
-          setPicks((prev) => prev.filter((p) => p.id !== payload.old.id));
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'draft_sessions', filter: `id=eq.${session.id}` },
-        (payload) => {
-          setSession(payload.new as DraftSession);
-        }
-      )
-      .subscribe();
+
+    async function setupChannel() {
+      const {
+        data: { session: authSession },
+      } = await supabase.auth.getSession();
+
+      if (authSession?.access_token) {
+        supabase.realtime.setAuth(authSession.access_token);
+      }
+
+      if (isCancelled || !session) return;
+
+      console.log('[draft realtime] subscribing to draft-' + session.id);
+
+      const channel = supabase
+        .channel(`draft-${session.id}`)
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'draft_picks', filter: `draft_session_id=eq.${session.id}` },
+          (payload) => {
+            console.log('[draft realtime] INSERT event received:', payload);
+            setPicks((prev) => {
+              if (prev.some((p) => p.id === payload.new.id)) return prev;
+              return [...prev, payload.new as Pick].sort((a, b) => a.pick_number - b.pick_number);
+            });
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: 'DELETE', schema: 'public', table: 'draft_picks', filter: `draft_session_id=eq.${session.id}` },
+          (payload) => {
+            console.log('[draft realtime] DELETE event received:', payload);
+            setPicks((prev) => prev.filter((p) => p.id !== payload.old.id));
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'draft_sessions', filter: `id=eq.${session.id}` },
+          (payload) => {
+            console.log('[draft realtime] UPDATE event received:', payload);
+            setSession(payload.new as DraftSession);
+          }
+        )
+        .subscribe((status) => {
+          console.log('[draft realtime] subscription status:', status);
+        });
+
+      channelRef.current = channel;
+    }
+
+    const channelRef = { current: null as ReturnType<typeof supabase.channel> | null };
+    setupChannel();
 
     return () => {
-      supabase.removeChannel(channel);
+      isCancelled = true;
+      if (channelRef.current) {
+        console.log('[draft realtime] unsubscribing');
+        supabase.removeChannel(channelRef.current);
+      }
     };
   }, [session?.id]);
 
