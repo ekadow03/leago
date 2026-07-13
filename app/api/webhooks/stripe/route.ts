@@ -34,28 +34,56 @@ export async function POST(req: NextRequest) {
   switch (event.type) {
     case 'payment_intent.succeeded': {
       const pi = event.data.object as Stripe.PaymentIntent;
-      const { error } = await admin
+
+      const { data: reg, error: regError } = await admin
         .from('registrations')
         .update({ payment_status: 'paid', status: 'confirmed' })
-        .eq('stripe_payment_intent_id', pi.id);
+        .eq('stripe_payment_intent_id', pi.id)
+        .select('id');
 
-      if (error) {
-        console.error('Failed to update registration on payment_intent.succeeded:', error);
+      if (regError) {
+        console.error('Failed to update registration on payment_intent.succeeded:', regError);
         return NextResponse.json({ error: 'DB update failed' }, { status: 500 });
+      }
+
+      if (!reg || reg.length === 0) {
+        const { error: teamError } = await admin
+          .from('tournament_teams')
+          .update({ payment_status: 'paid', status: 'confirmed' })
+          .eq('stripe_payment_intent_id', pi.id);
+
+        if (teamError) {
+          console.error('Failed to update tournament team on payment_intent.succeeded:', teamError);
+          return NextResponse.json({ error: 'DB update failed' }, { status: 500 });
+        }
       }
       break;
     }
 
     case 'payment_intent.payment_failed': {
       const pi = event.data.object as Stripe.PaymentIntent;
-      const { error } = await admin
+
+      const { data: reg, error: regError } = await admin
         .from('registrations')
         .update({ payment_status: 'failed' })
-        .eq('stripe_payment_intent_id', pi.id);
+        .eq('stripe_payment_intent_id', pi.id)
+        .select('id');
 
-      if (error) {
-        console.error('Failed to update registration on payment_intent.payment_failed:', error);
+      if (regError) {
+        console.error('Failed to update registration on payment_intent.payment_failed:', regError);
         return NextResponse.json({ error: 'DB update failed' }, { status: 500 });
+      }
+
+      if (!reg || reg.length === 0) {
+        const { error: teamError } = await admin
+          .from('tournament_teams')
+          .update({ payment_status: 'failed' })
+          .eq('stripe_payment_intent_id', pi.id);
+
+        if (teamError) {
+          console.error('Failed to update tournament team on payment_intent.payment_failed:', teamError);
+          return NextResponse.json({ error: 'DB update failed' }, { status: 500 });
+        }
       }
       break;
     }
@@ -86,6 +114,22 @@ export async function POST(req: NextRequest) {
               payment_status: newStatus,
             })
             .eq('id', registration.id);
+        } else {
+          const { data: team } = await admin
+            .from('tournament_teams')
+            .select('id, amount_cents')
+            .eq('stripe_payment_intent_id', paymentIntentId)
+            .single();
+
+          if (team) {
+            const refundedTotal = charge.amount_refunded;
+            await admin
+              .from('tournament_teams')
+              .update({
+                payment_status: refundedTotal >= team.amount_cents ? 'refunded' : 'paid',
+              })
+              .eq('id', team.id);
+          }
         }
       }
       break;
