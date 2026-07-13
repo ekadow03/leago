@@ -1,12 +1,11 @@
 // app/register/page.tsx
 //
-// Public browse page — lists divisions open for registration, across all
-// organizations. Relies on the 0003_public_registration_visibility.sql
-// policies (organizations always public-readable; seasons/divisions
-// readable when status = 'registration_open').
+// Public browse page — lists divisions open for registration. Relies on
+// the "public can read open-registration seasons" RLS policies.
 
 import { createClient } from '@/lib/supabase/server';
 import Link from 'next/link';
+import Nav from '@/components/nav';
 
 interface OpenDivision {
   id: string;
@@ -40,41 +39,46 @@ export default async function RegisterBrowsePage() {
     )
     .eq('season.status', 'registration_open');
 
+  const openDivisions = divisions as unknown as OpenDivision[] | null;
+
   return (
-    <div style={{ maxWidth: 640, margin: '60px auto', fontFamily: 'system-ui' }}>
-      <h1>Register for a season</h1>
+    <div>
+      <Nav />
 
-      {error && <p style={{ color: 'red' }}>Failed to load: {error.message}</p>}
+      <div className="hero-band">
+        <p className="hero-eyebrow">Registration is open</p>
+        <h1 className="hero-title">
+          Find your <span className="accent">season</span>
+        </h1>
+        <p className="hero-subtitle">
+          Browse divisions across every league on leago and sign up in a couple of minutes.
+        </p>
+      </div>
 
-      {!error && (!divisions || divisions.length === 0) && (
-        <p style={{ color: '#666' }}>
-          No divisions are currently open for registration. (If you're
-          testing locally, run <code>supabase/seed_test_league.sql</code> in
-          the Supabase SQL Editor first.)
+      {error && (
+        <p style={{ textAlign: 'center', color: '#B23A2E', padding: 24 }}>
+          Failed to load: {error.message}
         </p>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {(divisions as unknown as OpenDivision[] | null)?.map((d) => (
-          <Link
-            key={d.id}
-            href={`/register/${d.id}`}
-            style={{
-              display: 'block',
-              padding: 16,
-              border: '1px solid #ddd',
-              borderRadius: 8,
-              textDecoration: 'none',
-              color: 'inherit',
-            }}
-          >
-            <div style={{ fontWeight: 600 }}>
-              {d.season.organization.name} — {d.season.name}
-            </div>
-            <div>{d.name}</div>
-            <div style={{ color: '#666', fontSize: 14 }}>
-              {d.age_min && d.age_max ? `Ages ${d.age_min}–${d.age_max} · ` : ''}
-              ${(d.price_cents / 100).toFixed(2)}
+      {!error && (!openDivisions || openDivisions.length === 0) && (
+        <div className="empty-state">
+          <p>No divisions are open for registration right now. Check back soon.</p>
+        </div>
+      )}
+
+      <div className="card-grid">
+        {openDivisions?.map((d) => (
+          <Link key={d.id} href={`/register/${d.id}`} className="card">
+            <p className="card-eyebrow">{d.season.organization.name}</p>
+            <h2 className="card-title">{d.name}</h2>
+            <p className="card-meta">
+              {d.season.name}
+              {d.age_min && d.age_max ? ` · Ages ${d.age_min}–${d.age_max}` : ''}
+            </p>
+            <div className="card-footer">
+              <span className="card-price">${(d.price_cents / 100).toFixed(0)}</span>
+              <span className="card-cta">Register →</span>
             </div>
           </Link>
         ))}
