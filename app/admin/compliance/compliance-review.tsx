@@ -4,7 +4,7 @@
 import { useState } from 'react';
 import { reviewComplianceRecord, getDocumentSignedUrl } from '@/lib/actions/compliance';
 
-interface Record {
+interface ComplianceRecordRow {
   id: string;
   type: string;
   status: string;
@@ -26,7 +26,7 @@ export default function ComplianceReview({
   initialRecords,
 }: {
   organizationId: string;
-  initialRecords: Record[];
+  initialRecords: ComplianceRecordRow[];
 }) {
   const [records, setRecords] = useState(initialRecords);
   const [filter, setFilter] = useState<'all' | 'submitted' | 'verified' | 'rejected'>('submitted');
