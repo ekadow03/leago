@@ -1,10 +1,6 @@
 'use server';
 
 // lib/actions/draft.ts
-// Draft session lifecycle. Every mutation here is admin-only — coaches and
-// spectators watch via realtime subscriptions on the client, but only an
-// admin's click actually calls these actions, matching Evan's requirement
-// that the admin/league rep places every pick.
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOrgAdmin } from '@/lib/org-context';

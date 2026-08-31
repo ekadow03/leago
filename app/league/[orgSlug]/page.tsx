@@ -1,8 +1,4 @@
 // app/league/[orgSlug]/page.tsx
-//
-// Public — the "one stop shop" for a league: about info, contact details,
-// announcements, and quick links to registration/schedule/tournaments.
-
 import { createClient } from '@/lib/supabase/server';
 import Link from 'next/link';
 import BrandedNav from '@/components/branded-nav';

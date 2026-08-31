@@ -9,11 +9,6 @@ export interface PickInfo {
   isLastPickOfDraft: boolean;
 }
 
-/**
- * Given the team order and how many picks have been made so far, returns
- * whose turn it is. Snake draft: even rounds go in team_order order, odd
- * rounds reverse.
- */
 export function getCurrentPick(
   teamOrder: string[],
   currentPickIndex: number,

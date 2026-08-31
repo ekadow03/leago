@@ -1,8 +1,4 @@
 // app/schedule/[orgSlug]/page.tsx
-//
-// Public — no auth required. Relies on the "public can read published
-// events" RLS policy plus organizations being publicly readable.
-
 import { createClient } from '@/lib/supabase/server';
 import Nav from '@/components/nav';
 

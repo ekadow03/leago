@@ -1,9 +1,6 @@
 'use server';
 
 // lib/actions/refunds.ts
-// Admin-initiated refunds. RLS on registrations/refunds already restricts
-// who can reach this (org admins only), but we double-check here too since
-// the admin client bypasses RLS for the actual writes.
 
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -12,7 +9,7 @@ import { stripe } from '@/lib/stripe';
 
 interface IssueRefundInput {
   registrationId: string;
-  amountCents: number; // partial refunds allowed — must be <= remaining refundable amount
+  amountCents: number;
   reason?: string;
 }
 
@@ -83,9 +80,6 @@ export async function issueRefund(input: IssueRefundInput): Promise<{ refundId: 
   });
 
   if (refundInsertError) {
-    // The Stripe refund already happened — don't silently swallow this.
-    // A webhook-driven reconciliation job is the real fix long-term; for
-    // now, surface loudly so it gets manually reconciled.
     throw new Error(
       `Refund succeeded in Stripe (${stripeRefund.id}) but failed to record locally: ${refundInsertError.message}. Reconcile manually.`
     );

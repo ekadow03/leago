@@ -1,9 +1,6 @@
 'use server';
 
 // lib/actions/compliance.ts
-// Admin review of submitted compliance documents — approve/reject, and a
-// short-lived signed URL to actually view the file (never a public URL,
-// since the bucket is private per 0006_compliance.sql).
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOrgAdmin } from '@/lib/org-context';

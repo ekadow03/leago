@@ -1,14 +1,6 @@
 'use server';
 
 // lib/actions/onboarding.ts
-//
-// Self-serve league sign-up. Until now every organization was created
-// manually via SQL (seed_test_league.sql) — this is the first real
-// "create your own league" flow. Organizations.insert is normally
-// restricted to platform admins only (0001_foundation.sql), so this
-// action uses the admin client to bypass that after doing its own
-// authorization check (must be logged in) — same pattern as every other
-// admin-client action in this codebase.
 
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';

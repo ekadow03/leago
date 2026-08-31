@@ -20,7 +20,7 @@ export default function CreateLeagueForm() {
     setSubmitting(true);
     setError(null);
     try {
-      const result = await createLeagueOrganization({ name, slug: name });
+      await createLeagueOrganization({ name, slug: name });
       router.push('/admin/league-hub');
       router.refresh();
     } catch (err: any) {

@@ -1,9 +1,6 @@
 'use server';
 
 // lib/actions/branding.ts
-// White-label branding for tournament operators — lets an org set a
-// custom subdomain, logo, and accent color so their public tournament
-// pages look like their own platform rather than showing "leago" branding.
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOrgAdmin } from '@/lib/org-context';

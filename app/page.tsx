@@ -1,10 +1,4 @@
 // app/page.tsx
-//
-// The actual marketing homepage now — root used to redirect straight to
-// /register (which is for parents/players), but that's the wrong front
-// door for a league considering signing UP for the platform. This is
-// that front door; /register remains reachable and linked from here.
-
 import Link from 'next/link';
 import Nav from '@/components/nav';
 

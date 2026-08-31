@@ -1,8 +1,6 @@
 'use server';
 
 // lib/actions/evaluations.ts
-// Evaluation scoring — admin/evaluator only. See 0007_evaluations_and_draft.sql
-// for why this is intentionally never readable by players/parents.
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOrgAdmin } from '@/lib/org-context';

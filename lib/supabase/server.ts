@@ -35,9 +35,3 @@ export async function createClient() {
     }
   );
 }
-
-// lib/supabase/admin.ts would wrap the service-role key for the narrow set
-// of operations that must bypass RLS (e.g. org creation, Stripe webhook
-// handlers writing payment status). Never import that client into anything
-// that renders user-supplied data back without an explicit authorization
-// check first — service role bypasses every policy in 0001_foundation.sql.

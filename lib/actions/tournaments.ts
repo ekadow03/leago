@@ -6,10 +6,6 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOrgAdmin } from '@/lib/org-context';
 import { stripe } from '@/lib/stripe';
 
-// ============================================================================
-// TOURNAMENT CRUD (admin)
-// ============================================================================
-
 interface CreateTournamentInput {
   organizationId: string;
   name: string;
@@ -57,10 +53,6 @@ export async function setTournamentStatus(
   const { error } = await admin.from('tournaments').update({ status }).eq('id', tournamentId);
   if (error) throw new Error(`Failed to update status: ${error.message}`);
 }
-
-// ============================================================================
-// EXTERNAL TEAM REGISTRATION (public — no auth required)
-// ============================================================================
 
 interface RegisterTeamInput {
   tournamentId: string;
@@ -147,10 +139,6 @@ export async function registerTournamentTeam(
   return { teamId: team.id, clientSecret: paymentIntent.client_secret! };
 }
 
-// ============================================================================
-// BRACKET GENERATION + ADVANCEMENT (admin)
-// ============================================================================
-
 function shuffle<T>(arr: T[]): T[] {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -165,12 +153,6 @@ export async function generateBracket(organizationId: string, tournamentId: stri
   if (!isAdmin) throw new Error('Only an organization admin can generate the bracket.');
 
   const admin = createAdminClient();
-
-  const { data: tournament } = await admin
-    .from('tournaments')
-    .select('entry_fee_cents')
-    .eq('id', tournamentId)
-    .single();
 
   const { data: teams } = await admin
     .from('tournament_teams')

@@ -1,16 +1,6 @@
 // app/api/webhooks/ankored/route.ts
 //
 // ⚠️ SCAFFOLD ONLY — NOT LIVE ⚠️
-// This is where Ankored would POST status updates once a background
-// check moves through their pipeline. Everything here — the signature
-// verification, the payload shape, the status values — is a best guess
-// based on how similar vendor webhooks typically work (see the pattern
-// used for Stripe's webhook in app/api/webhooks/stripe/route.ts), NOT
-// confirmed against Ankored's actual docs. Correct all of this once you
-// have real API access.
-//
-// Once live, register this URL with Ankored as your webhook endpoint:
-// https://yourdomain.com/api/webhooks/ankored
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';

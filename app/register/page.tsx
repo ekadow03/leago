@@ -1,8 +1,4 @@
 // app/register/page.tsx
-//
-// Public browse page — lists divisions open for registration. Relies on
-// the "public can read open-registration seasons" RLS policies.
-
 import { createClient } from '@/lib/supabase/server';
 import Link from 'next/link';
 import Nav from '@/components/nav';

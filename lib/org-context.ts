@@ -1,8 +1,6 @@
 // lib/org-context.ts
 // Central place to resolve "who is this user, and what orgs/roles do they
-// have" for use across Server Actions and pages. Every multi-tenant page
-// should call this rather than querying organization_members directly, so
-// there's one place to change if the membership model evolves.
+// have" for use across Server Actions and pages.
 
 import { createClient } from '@/lib/supabase/server';
 
@@ -16,12 +14,6 @@ export interface OrgMembership {
   roles: OrgRole[];
 }
 
-/**
- * Returns every organization the current authenticated user belongs to,
- * with their role(s) in each. Relies entirely on RLS (0001_foundation.sql,
- * "org members can read their org's membership list") — no service role
- * key involved, so this can never leak another user's memberships.
- */
 export async function getCurrentUserMemberships(): Promise<OrgMembership[]> {
   const supabase = await createClient();
 
@@ -47,7 +39,6 @@ export async function getCurrentUserMemberships(): Promise<OrgMembership[]> {
 
   if (error || !data) return [];
 
-  // Collapse multiple role-rows for the same org into one membership entry.
   const byOrg = new Map<string, OrgMembership>();
 
   for (const row of data as any[]) {
@@ -69,11 +60,6 @@ export async function getCurrentUserMemberships(): Promise<OrgMembership[]> {
   return Array.from(byOrg.values());
 }
 
-/**
- * Convenience check for gating admin-only Server Actions. Cheap to call
- * repeatedly — it's a single indexed lookup, and RLS backs it regardless,
- * so this is a UX/early-exit guard, not the actual security boundary.
- */
 export async function requireOrgAdmin(organizationId: string): Promise<boolean> {
   const memberships = await getCurrentUserMemberships();
   return memberships.some(

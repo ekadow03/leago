@@ -1,9 +1,4 @@
 // components/branded-nav.tsx
-//
-// Used on public tournament pages instead of the shared Leago <Nav /> —
-// renders the HOSTING organization's own name/logo/color so their
-// tournament page looks like their own platform, not "leago's."
-
 interface BrandingTheme {
   logoUrl?: string | null;
   primaryColor?: string | null;

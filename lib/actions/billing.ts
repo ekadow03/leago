@@ -1,12 +1,6 @@
 'use server';
 
 // lib/actions/billing.ts
-// Platform subscription checkout. Uses Stripe Checkout (mode: subscription)
-// rather than a custom Payment Element form — subscriptions have real
-// lifecycle complexity (proration, renewal, dunning) that Checkout's
-// hosted flow already handles correctly, so there's no good reason to
-// reimplement it. Pricing is placeholder — see TIERS below and
-// ARCHITECTURE.md §9, which flags platform pricing as an open question.
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOrgAdmin } from '@/lib/org-context';

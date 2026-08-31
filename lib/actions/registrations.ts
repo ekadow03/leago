@@ -1,13 +1,6 @@
 'use server';
 
 // lib/actions/registrations.ts
-// Registration creation flow. This runs server-side only (Server Action),
-// using the admin client because we need to write the registrations row
-// and create the Stripe PaymentIntent as a matched pair — RLS would be the
-// wrong tool here since the writing "user" at this point is really "the
-// registration flow acting on the submitter's behalf," and the actual
-// authorization check (is this person allowed to register for this org's
-// season) is done explicitly below rather than delegated to a policy.
 
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -16,15 +9,15 @@ import { stripe } from '@/lib/stripe';
 interface CreateRegistrationInput {
   organizationId: string;
   seasonId: string;
-  personId: string; // the registrant (may be a minor — see submittedByPersonId)
+  personId: string;
   registrationType: 'player' | 'coach' | 'volunteer';
   amountCents: number;
-  submittedByPersonId?: string; // parent/guardian, if different from personId
+  submittedByPersonId?: string;
 }
 
 interface CreateRegistrationResult {
   registrationId: string;
-  clientSecret: string; // for Stripe Elements on the client
+  clientSecret: string;
 }
 
 export async function createRegistration(
@@ -39,9 +32,6 @@ export async function createRegistration(
     throw new Error('Must be logged in to register.');
   }
 
-  // Confirm the logged-in user is actually the registrant or the submitter
-  // they claim to be — this is the real authorization check, since we're
-  // about to use the admin client for the writes.
   const { data: submitterPerson } = await supabase
     .from('people')
     .select('id')
@@ -59,8 +49,6 @@ export async function createRegistration(
 
   const admin = createAdminClient();
 
-  // Look up the org's Stripe Connect account — payment must flow to the
-  // league, not the platform.
   const { data: org, error: orgError } = await admin
     .from('organizations')
     .select('stripe_connect_account_id')
@@ -71,9 +59,6 @@ export async function createRegistration(
     throw new Error('This organization has not completed payment setup.');
   }
 
-  // Guard against duplicate active registrations (see comment in
-  // 0002_registrations.sql — the DB constraint alone doesn't prevent this
-  // since it includes `status`, so we check explicitly here).
   const { data: existing } = await admin
     .from('registrations')
     .select('id')
@@ -88,8 +73,7 @@ export async function createRegistration(
   }
 
   // Zero-cost registrations (e.g. some volunteer or coach roles) skip
-  // Stripe entirely — PaymentIntents can't be created for $0, and there's
-  // nothing to charge anyway. Mark confirmed/paid immediately instead.
+  // Stripe entirely — PaymentIntents can't be created for $0.
   if (input.amountCents === 0) {
     const { data: registration, error: regError } = await admin
       .from('registrations')
@@ -113,8 +97,6 @@ export async function createRegistration(
     return { registrationId: registration.id, clientSecret: '' };
   }
 
-  // Platform fee — flat example; replace with real pricing once decided
-  // (ARCHITECTURE.md §9 flags platform pricing as an open question).
   const platformFeeCents = Math.round(input.amountCents * 0.03);
 
   const paymentIntent = await stripe.paymentIntents.create({
@@ -149,8 +131,6 @@ export async function createRegistration(
     .single();
 
   if (regError || !registration) {
-    // Cancel the PaymentIntent so we don't leave an orphaned charge attempt
-    // with no corresponding registration row.
     await stripe.paymentIntents.cancel(paymentIntent.id).catch(() => {});
     throw new Error(`Failed to create registration: ${regError?.message}`);
   }

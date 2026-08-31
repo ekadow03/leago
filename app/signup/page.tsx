@@ -1,13 +1,15 @@
-// app/login/page.tsx
+// app/signup/page.tsx
 'use client';
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { logIn } from '@/lib/actions/auth';
+import { signUp } from '@/lib/actions/auth';
 import Nav from '@/components/nav';
 
-export default function LoginPage() {
+export default function SignUpPage() {
   const router = useRouter();
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -18,7 +20,7 @@ export default function LoginPage() {
     setSubmitting(true);
     setError(null);
 
-    const result = await logIn({ email, password });
+    const result = await signUp({ email, password, firstName, lastName });
 
     setSubmitting(false);
 
@@ -27,16 +29,29 @@ export default function LoginPage() {
       return;
     }
 
-    router.push('/register');
-    router.refresh();
+    router.push('/signup/check-email');
   }
 
   return (
     <div className="auth-page">
       <Nav />
       <div className="auth-body">
-        <h1>Log in</h1>
+        <h1>Create an account</h1>
         <form onSubmit={handleSubmit} className="form-card">
+          <label className="form-label">First name</label>
+          <input
+            className="form-input"
+            value={firstName}
+            onChange={(e) => setFirstName(e.target.value)}
+            required
+          />
+          <label className="form-label">Last name</label>
+          <input
+            className="form-input"
+            value={lastName}
+            onChange={(e) => setLastName(e.target.value)}
+            required
+          />
           <label className="form-label">Email</label>
           <input
             type="email"
@@ -51,15 +66,16 @@ export default function LoginPage() {
             className="form-input"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            minLength={6}
             required
           />
           {error && <p style={{ color: '#B23A2E', fontSize: 14, marginBottom: 12 }}>{error}</p>}
           <button type="submit" disabled={submitting} className="btn-primary" style={{ width: '100%' }}>
-            {submitting ? 'Logging in…' : 'Log in'}
+            {submitting ? 'Creating account…' : 'Sign up'}
           </button>
         </form>
         <p className="auth-footer">
-          Need an account? <a href="/signup">Sign up</a>
+          Already have an account? <a href="/login">Log in</a>
         </p>
       </div>
     </div>

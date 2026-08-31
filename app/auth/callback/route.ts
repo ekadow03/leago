@@ -1,9 +1,4 @@
 // app/auth/callback/route.ts
-//
-// Supabase's confirmation email links here with a `code` param. Exchanging
-// it establishes the session — without this route, clicking the email link
-// would land the user on a page with no active session, looking broken.
-
 import { createClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 

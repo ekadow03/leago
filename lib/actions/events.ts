@@ -1,9 +1,6 @@
 'use server';
 
 // lib/actions/events.ts
-// Schedule management — creating games/practices/events and publishing them.
-// All mutations are admin-only; reading is handled directly via RLS in the
-// pages (public sees published only, org members see everything).
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOrgAdmin } from '@/lib/org-context';

@@ -1,11 +1,6 @@
 'use server';
 
 // lib/actions/documents.ts
-// Uploads a compliance document (birth certificate, coach cert) and creates
-// the tracking rows. Uses the admin client for both the Storage upload and
-// the DB writes, since this needs to coordinate two operations atomically-
-// ish — client-side RLS on Storage inserts can't easily do that. The real
-// authorization check happens explicitly below, not via RLS on the insert.
 
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';

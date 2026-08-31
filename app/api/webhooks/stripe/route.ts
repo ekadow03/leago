@@ -1,9 +1,4 @@
 // app/api/webhooks/stripe/route.ts
-// Stripe webhook endpoint. This is the source of truth for payment status —
-// never trust client-side "payment succeeded" callbacks alone, since those
-// can be spoofed or interrupted. Configure this URL in the Stripe dashboard
-// (or via `stripe listen` for local testing) and set STRIPE_WEBHOOK_SECRET.
-
 import { NextRequest, NextResponse } from 'next/server';
 import { stripe } from '@/lib/stripe';
 import { createAdminClient } from '@/lib/supabase/admin';

@@ -1,10 +1,4 @@
 // app/org-tournaments/[orgSlug]/page.tsx
-//
-// Public — this is what a visitor to acmetourneys.leago.com sees at the
-// root path (see proxy.ts, which rewrites subdomain root requests here).
-// [orgSlug] is actually the org's SUBDOMAIN value, not its slug — named
-// orgSlug for readability, but looked up against organizations.subdomain.
-
 import { createClient } from '@/lib/supabase/server';
 import Link from 'next/link';
 import BrandedNav from '@/components/branded-nav';
