@@ -127,8 +127,60 @@ function zonedDateTimeToIso(date: Date, time: string, timeZone: string): string 
   return new Date(guessMs - offsetMs).toISOString();
 }
 
+interface BlackoutRow {
+  kind: 'date' | 'weekly' | 'daily';
+  field_name: string | null;
+  blackout_date: string | null;
+  day_of_week: number | null;
+  start_time: string | null;
+  end_time: string | null;
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+// Whether a candidate (date, time, field) slot falls inside any of the
+// season's blackouts — see migration 0017 for what each `kind` means. A
+// blackout with no start/end time blocks the WHOLE occurrence (the whole
+// day, for 'date'; every instance of that weekday, for 'weekly'; every
+// day, for 'daily'). One with a time range only blocks a slot whose start
+// time falls inside [start, end) that day, converted through the same
+// timezone logic as the slot itself so a blackout defined as "6-9pm"
+// means 6-9pm locally, not UTC.
+function isBlackedOut(date: Date, time: string, field: string, blackouts: BlackoutRow[], timeZone: string): boolean {
+  if (blackouts.length === 0) return false;
+
+  const dateStr = `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+  const slotMs = new Date(zonedDateTimeToIso(date, time, timeZone)).getTime();
+
+  for (const b of blackouts) {
+    if (b.field_name && b.field_name.toLowerCase() !== field.toLowerCase()) continue;
+
+    let dayMatches = false;
+    if (b.kind === 'date') dayMatches = b.blackout_date === dateStr;
+    else if (b.kind === 'weekly') dayMatches = b.day_of_week === date.getDay();
+    else if (b.kind === 'daily') dayMatches = true;
+    if (!dayMatches) continue;
+
+    if (!b.start_time || !b.end_time) return true; // whole day/occurrence blocked
+
+    const startMs = new Date(zonedDateTimeToIso(date, b.start_time, timeZone)).getTime();
+    const endMs = new Date(zonedDateTimeToIso(date, b.end_time, timeZone)).getTime();
+    if (slotMs >= startMs && slotMs < endMs) return true;
+  }
+
+  return false;
+}
+
 type GenerateScheduleResult =
-  | { gamesCreated: number; weeksScheduled: number; conflictsAvoided: number; targetReached: boolean }
+  | {
+      gamesCreated: number;
+      weeksScheduled: number;
+      conflictsAvoided: number;
+      blackoutsSkipped: number;
+      targetReached: boolean;
+    }
   | { error: string };
 
 export async function generateSeasonSchedule(input: GenerateScheduleInput): Promise<GenerateScheduleResult> {
@@ -205,6 +257,16 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
 
     const occupied = new Set((existingEvents ?? []).map((e) => `${e.location}|${e.start_time}`));
 
+    // ---- Step 2b: this season's blackouts (migration 0017) — holidays,
+    // field closures, standing conflicts. Scoped to the season, not the
+    // division, so every division sharing it is protected the same way. ----
+    const { data: blackoutRows } = await admin
+      .from('blackouts')
+      .select('kind, field_name, blackout_date, day_of_week, start_time, end_time')
+      .eq('season_id', input.seasonId);
+
+    const blackouts: BlackoutRow[] = blackoutRows ?? [];
+
     // ---- Step 3: build one round-robin cycle, to be repeated across dates ----
     const cycle = buildRoundRobinCycle(teamIds);
     const cycleRounds = cycle.map((round) =>
@@ -246,6 +308,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     let roundIndex = 0;
     let pendingMatchups: [string, string][] = [...cycleRounds[0]];
     let conflictsAvoided = 0;
+    let blackoutsSkipped = 0;
     let weekNumber = 1; // round 0 is already "week" 1
 
     const gamesPlayed = new Map<string, number>(teamIds.map((id) => [id, 0]));
@@ -255,6 +318,10 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     for (const date of gameDates) {
       const configuredSlots = slotsByDay.get(date.getDay())!;
       const availableSlots = configuredSlots.filter((slot) => {
+        if (isBlackedOut(date, slot.time, slot.field, blackouts, timeZone)) {
+          blackoutsSkipped++;
+          return false;
+        }
         const isoTime = zonedDateTimeToIso(date, slot.time, timeZone);
         const taken = occupied.has(`${slot.field}|${isoTime}`);
         if (taken) conflictsAvoided++;
@@ -314,6 +381,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
       gamesCreated: eventsToInsert.length,
       weeksScheduled: weekNumber,
       conflictsAvoided,
+      blackoutsSkipped,
       targetReached: targetReachedFor(),
     };
   } catch (err) {

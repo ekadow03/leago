@@ -3,8 +3,6 @@
 
 import { useState, useRef } from 'react';
 import Link from 'next/link';
-import { bulkCreateTeams } from '@/lib/actions/team-import';
-import { createTeam } from '@/lib/actions/teams';
 import { generateSeasonSchedule } from '@/lib/actions/auto-schedule';
 import { createField } from '@/lib/actions/fields';
 
@@ -49,22 +47,15 @@ export default function SeasonBuilder({
   existingGameCount: number;
   orgFields: OrgField[];
 }) {
-  const [teams, setTeams] = useState(initialTeams);
-
   return (
     <div>
-      <TeamImport
-        divisionId={divisionId}
-        organizationId={organizationId}
-        teams={teams}
-        setTeams={setTeams}
-      />
+      <TeamSummary teams={initialTeams} />
       <ScheduleGenerator
         organizationId={organizationId}
         seasonId={seasonId}
         divisionId={divisionId}
         divisionName={divisionName}
-        teamCount={teams.length}
+        teamCount={initialTeams.length}
         existingGameCount={existingGameCount}
         orgFields={orgFields}
       />
@@ -72,128 +63,32 @@ export default function SeasonBuilder({
   );
 }
 
-function downloadCsvTemplate() {
-  const csv = 'team_name\nRed Sox\nBlue Jays\nYankees\n';
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'team-template.csv';
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-function TeamImport({
-  divisionId,
-  organizationId,
-  teams,
-  setTeams,
-}: {
-  divisionId: string;
-  organizationId: string;
-  teams: Team[];
-  setTeams: React.Dispatch<React.SetStateAction<Team[]>>;
-}) {
-  const [error, setError] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [newTeamName, setNewTeamName] = useState('');
-  const [addingTeam, setAddingTeam] = useState(false);
-
-  async function handleAddTeam(e: React.FormEvent) {
-    e.preventDefault();
-    setAddingTeam(true);
-    setError(null);
-    try {
-      const result = await createTeam(organizationId, divisionId, newTeamName);
-      if ('error' in result) {
-        setError(result.error);
-        return;
-      }
-      setTeams((prev) => [...prev, { id: result.id, name: result.name }]);
-      setNewTeamName('');
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setAddingTeam(false);
-    }
-  }
-
-  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setUploading(true);
-    setError(null);
-
-    try {
-      const text = await file.text();
-      // Simple CSV parse — single column ("team_name"), one name per line.
-      // Skips a header row if the first line looks like "team_name".
-      const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-      const dataLines =
-        lines[0]?.toLowerCase().includes('team') ? lines.slice(1) : lines;
-
-      if (dataLines.length === 0) {
-        throw new Error('No team names found in that file.');
-      }
-
-      const result = await bulkCreateTeams(organizationId, divisionId, dataLines);
-      if ('error' in result) {
-        throw new Error(result.error);
-      }
-      // Re-derive the new list is simplest via a light reload of just the
-      // names we just sent — real IDs will show correctly after a page
-      // refresh, but this keeps the UI responsive immediately.
-      setTeams((prev) => [
-        ...prev,
-        ...dataLines.map((name) => ({ id: `pending-${name}`, name })),
-      ]);
-      alert(`Imported ${result.count} team(s).`);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setUploading(false);
-      e.target.value = '';
-    }
-  }
-
+// Teams themselves are managed from the org-wide /admin/teams page now
+// (manual add there, or a CSV import across every division in a season at
+// once) — this is a read-only reminder of who's in the division, with a
+// link out to actually change it.
+function TeamSummary({ teams }: { teams: Team[] }) {
   return (
     <div className="form-card" style={{ marginBottom: 32 }}>
-      <h2>Teams ({teams.length})</h2>
-
-      {teams.length > 0 && (
-        <div className="chip-list">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h2 style={{ margin: 0 }}>Teams ({teams.length})</h2>
+        <Link href="/admin/teams" className="btn-small">
+          Manage teams
+        </Link>
+      </div>
+      {teams.length > 0 ? (
+        <div className="chip-list" style={{ marginTop: 12 }}>
           {teams.map((t) => (
-            <span key={t.id} className="chip">{t.name}</span>
+            <span key={t.id} className="chip">
+              {t.name}
+            </span>
           ))}
         </div>
+      ) : (
+        <p style={{ color: 'var(--gray)', fontSize: 13, marginTop: 12 }}>
+          No teams in this division yet — add them from the Teams page before generating a schedule.
+        </p>
       )}
-
-      {error && <p style={{ color: '#B23A2E', fontSize: 14 }}>{error}</p>}
-
-      <form onSubmit={handleAddTeam} className="add-chip-row">
-        <input
-          value={newTeamName}
-          onChange={(e) => setNewTeamName(e.target.value)}
-          className="form-input"
-          placeholder="Team name, e.g. Red Sox"
-        />
-        <button type="submit" disabled={addingTeam || !newTeamName.trim()} className="btn-small">
-          {addingTeam ? 'Adding…' : '+ Add team'}
-        </button>
-      </form>
-
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <button onClick={downloadCsvTemplate} className="btn-small">
-          Download CSV template
-        </button>
-        <label style={{ cursor: 'pointer' }}>
-          <span className="btn-small" style={{ display: 'inline-block' }}>
-            {uploading ? 'Importing…' : 'Upload teams CSV'}
-          </span>
-          <input type="file" accept=".csv" onChange={handleFileChange} disabled={uploading} style={{ display: 'none' }} />
-        </label>
-      </div>
     </div>
   );
 }
@@ -351,6 +246,7 @@ function ScheduleGenerator({
     gamesCreated: number;
     weeksScheduled: number;
     conflictsAvoided: number;
+    blackoutsSkipped: number;
     targetReached: boolean;
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -625,9 +521,11 @@ function ScheduleGenerator({
       {result && (
         <>
           <p style={{ color: 'var(--green-dark)', fontSize: 14, fontWeight: 600 }}>
-            Created {result.gamesCreated} games across {result.weeksScheduled} week(s).
+            Created {result.gamesCreated} games across {result.weeksScheduled} round(s).
             {result.conflictsAvoided > 0 &&
               ` Skipped ${result.conflictsAvoided} slot(s) already booked by another event.`}
+            {result.blackoutsSkipped > 0 &&
+              ` Skipped ${result.blackoutsSkipped} slot(s) blocked by a blackout.`}
           </p>
           {!result.targetReached && (
             <p style={{ color: '#B23A2E', fontSize: 13, marginTop: -4 }}>

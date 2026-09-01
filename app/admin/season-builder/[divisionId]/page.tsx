@@ -84,7 +84,7 @@ export default async function SeasonBuilderPage({
           ← Back to admin
         </Link>
         <h1>{division.name}</h1>
-        <p>{season.name} · Season builder</p>
+        <p>{season.name} · Schedule</p>
       </div>
       <div className="admin-body">
         <SeasonBuilder

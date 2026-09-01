@@ -33,6 +33,21 @@ export async function bulkCreateTeams(
 
     const admin = createAdminClient();
 
+    // Defense in depth: requireOrgAdmin only checked the caller-supplied
+    // organizationId, which the client controls — confirm the division
+    // being written to actually belongs to that org before inserting,
+    // since the admin client bypasses RLS.
+    const { data: division } = await admin
+      .from('divisions')
+      .select('id, seasons ( organization_id )')
+      .eq('id', divisionId)
+      .single();
+
+    const orgId = (division?.seasons as any)?.organization_id;
+    if (!division || orgId !== organizationId) {
+      return { error: 'Division not found for this organization.' };
+    }
+
     const { error } = await admin
       .from('teams')
       .insert(cleaned.map((name) => ({ division_id: divisionId, name })));

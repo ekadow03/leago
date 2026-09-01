@@ -362,7 +362,7 @@ export default function ScheduleBuilder({
             value={editWeekNumber}
             onChange={(e) => setEditWeekNumber(e.target.value)}
             className="form-input"
-            placeholder="Week number (optional)"
+            placeholder="Round number (optional)"
             style={{ maxWidth: 200 }}
           />
           <div style={{ display: 'flex', gap: 8 }}>
@@ -532,7 +532,7 @@ export default function ScheduleBuilder({
               {sortedWeekKeys.map((weekKey) => (
                 <div key={weekKey ?? 'unscheduled'} style={{ marginBottom: 20 }}>
                   <h3 style={{ fontSize: 14, color: 'var(--gray)', marginBottom: 8 }}>
-                    {weekKey === null ? 'Unscheduled / manually added' : `Week ${weekKey}`}
+                    {weekKey === null ? 'Unscheduled / manually added' : `Round ${weekKey}`}
                   </h3>
                   <div className="data-table-card">{weekGroups.get(weekKey)!.map((ev) => renderEventRow(ev))}</div>
                 </div>
