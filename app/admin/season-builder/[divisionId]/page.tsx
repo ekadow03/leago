@@ -64,11 +64,14 @@ export default async function SeasonBuilderPage({
     .eq('division_id', divisionId)
     .order('name', { ascending: true });
 
-  const { data: existingGames } = await supabase
+  const { data: existingGameRows } = await supabase
     .from('events')
-    .select('id', { count: 'exact', head: true })
+    .select('status')
     .eq('division_id', divisionId)
     .eq('type', 'game');
+
+  const draftGameCount = (existingGameRows ?? []).filter((r) => r.status === 'draft').length;
+  const publishedGameCount = (existingGameRows ?? []).filter((r) => r.status === 'published').length;
 
   const { data: orgFields } = await supabase
     .from('fields')
@@ -99,6 +102,16 @@ export default async function SeasonBuilderPage({
     .map((row) => row.fields?.name)
     .filter((name): name is string => !!name);
 
+  // Last-used generation inputs for this division (migration 0019), if
+  // it's been generated before — restored into the form below so
+  // regenerating with today's teams/blackouts/priorities doesn't mean
+  // re-entering every day/time/field slot from scratch.
+  const { data: savedSettings } = await supabase
+    .from('schedule_generation_settings')
+    .select('day_slots, games_per_team, game_duration_minutes, start_date, end_date')
+    .eq('division_id', divisionId)
+    .maybeSingle();
+
   return (
     <div className="admin-page">
       <Nav />
@@ -116,10 +129,12 @@ export default async function SeasonBuilderPage({
           divisionId={divisionId}
           divisionName={division.name}
           initialTeams={teams ?? []}
-          existingGameCount={(existingGames as any)?.count ?? 0}
+          draftGameCount={draftGameCount}
+          publishedGameCount={publishedGameCount}
           orgFields={orgFields ?? []}
           initialBlackouts={(blackouts as any) ?? []}
           initialFieldNames={initialFieldNames}
+          initialSettings={(savedSettings as any) ?? null}
         />
       </div>
     </div>

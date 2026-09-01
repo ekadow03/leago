@@ -34,6 +34,47 @@ interface TimeGroup {
   fields: string[];
 }
 
+// Matches auto-schedule.ts's DaySlotInput shape exactly — this is the
+// flat list stored verbatim in schedule_generation_settings.day_slots
+// (migration 0019) and handed straight to generateSeasonSchedule().
+interface SavedDaySlot {
+  dayOfWeek: number;
+  time: string;
+  field: string;
+}
+
+interface SavedSettings {
+  day_slots: SavedDaySlot[];
+  games_per_team: number;
+  game_duration_minutes: number;
+  start_date: string;
+  end_date: string;
+}
+
+// Regroups a flat saved slot list back into the picker's per-day,
+// per-time state shape — the inverse of the flattening handleGenerate()
+// does before calling generateSeasonSchedule().
+function slotsToPickerState(slots: SavedDaySlot[]): {
+  activeDays: number[];
+  daySlots: Record<number, TimeGroup[]>;
+} {
+  const activeDays = Array.from(new Set(slots.map((s) => s.dayOfWeek))).sort((a, b) => a - b);
+  const daySlots: Record<number, TimeGroup[]> = {};
+  for (const slot of slots) {
+    const groups = daySlots[slot.dayOfWeek] ?? (daySlots[slot.dayOfWeek] = []);
+    let group = groups.find((g) => g.time === slot.time);
+    if (!group) {
+      group = { time: slot.time, fields: [] };
+      groups.push(group);
+    }
+    if (!group.fields.includes(slot.field)) group.fields.push(slot.field);
+  }
+  for (const day of Object.keys(daySlots)) {
+    daySlots[Number(day)].sort((a, b) => a.time.localeCompare(b.time));
+  }
+  return { activeDays, daySlots };
+}
+
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 function formatTime12h(t: string): string {
@@ -49,20 +90,24 @@ export default function SeasonBuilder({
   divisionId,
   divisionName,
   initialTeams,
-  existingGameCount,
+  draftGameCount,
+  publishedGameCount,
   orgFields,
   initialBlackouts,
   initialFieldNames,
+  initialSettings,
 }: {
   organizationId: string;
   seasonId: string;
   divisionId: string;
   divisionName: string;
   initialTeams: Team[];
-  existingGameCount: number;
+  draftGameCount: number;
+  publishedGameCount: number;
   orgFields: OrgField[];
   initialBlackouts: Blackout[];
   initialFieldNames: string[];
+  initialSettings: SavedSettings | null;
 }) {
   return (
     <div>
@@ -73,10 +118,12 @@ export default function SeasonBuilder({
         divisionId={divisionId}
         divisionName={divisionName}
         teamCount={initialTeams.length}
-        existingGameCount={existingGameCount}
+        draftGameCount={draftGameCount}
+        publishedGameCount={publishedGameCount}
         orgFields={orgFields}
         initialBlackouts={initialBlackouts}
         initialFieldNames={initialFieldNames}
+        initialSettings={initialSettings}
       />
     </div>
   );
@@ -232,22 +279,37 @@ function ScheduleGenerator({
   divisionId,
   divisionName,
   teamCount,
-  existingGameCount,
+  draftGameCount,
+  publishedGameCount,
   orgFields,
   initialBlackouts,
   initialFieldNames,
+  initialSettings,
 }: {
   organizationId: string;
   seasonId: string;
   divisionId: string;
   divisionName: string;
   teamCount: number;
-  existingGameCount: number;
+  draftGameCount: number;
+  publishedGameCount: number;
   orgFields: OrgField[];
   initialBlackouts: Blackout[];
   initialFieldNames: string[];
+  initialSettings: SavedSettings | null;
 }) {
   const [blackouts, setBlackouts] = useState(initialBlackouts);
+
+  // Restore the last-used generation inputs (migration 0019) when this
+  // division has been generated before, so regenerating with updated
+  // teams/blackouts/priorities is a single click instead of re-entering
+  // every day/time/field/date. Falls back to the field-priority prefill
+  // (migration 0018) and otherwise-blank picker state for a division
+  // that's never been generated yet.
+  const restored = initialSettings ? slotsToPickerState(initialSettings.day_slots) : null;
+  const restoredFieldNames = initialSettings
+    ? Array.from(new Set(initialSettings.day_slots.map((s) => s.field)))
+    : initialFieldNames;
 
   // Fields selected for THIS division's schedule — a subset of the
   // organization's shared field registry (migration 0016). Picking from
@@ -256,25 +318,23 @@ function ScheduleGenerator({
   // reliable: it matches on the literal location string, so "Field 1"
   // typed twice with different casing would otherwise silently defeat it.
   const [availableOrgFields, setAvailableOrgFields] = useState<OrgField[]>(orgFields);
-  // Pre-filled from this division's field priority ranking (migration
-  // 0018), in priority order, so the fields it's set up to have first
-  // claim on are already selected instead of needing to be re-picked
-  // every time a schedule is generated. Still just a starting point —
-  // add/remove freely below.
-  const [fields, setFields] = useState<string[]>(initialFieldNames);
+  const [fields, setFields] = useState<string[]>(restoredFieldNames);
   const [fieldToAdd, setFieldToAdd] = useState('');
   const [newFieldName, setNewFieldName] = useState('');
   const [addingField, setAddingField] = useState(false);
   const [fieldError, setFieldError] = useState<string | null>(null);
-  const [activeDays, setActiveDays] = useState<number[]>([]);
-  const [daySlots, setDaySlots] = useState<Record<number, TimeGroup[]>>({});
-  const [gamesPerTeam, setGamesPerTeam] = useState('');
-  const [gameDuration, setGameDuration] = useState('60');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [activeDays, setActiveDays] = useState<number[]>(restored?.activeDays ?? []);
+  const [daySlots, setDaySlots] = useState<Record<number, TimeGroup[]>>(restored?.daySlots ?? {});
+  const [gamesPerTeam, setGamesPerTeam] = useState(initialSettings ? String(initialSettings.games_per_team) : '');
+  const [gameDuration, setGameDuration] = useState(
+    initialSettings ? String(initialSettings.game_duration_minutes) : '60'
+  );
+  const [startDate, setStartDate] = useState(initialSettings?.start_date ?? '');
+  const [endDate, setEndDate] = useState(initialSettings?.end_date ?? '');
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{
     gamesCreated: number;
+    replacedCount: number;
     weeksScheduled: number;
     conflictsAvoided: number;
     blackoutsSkipped: number;
@@ -443,10 +503,27 @@ function ScheduleGenerator({
         page when ready.
       </p>
 
-      {existingGameCount > 0 && (
+      {(draftGameCount > 0 || publishedGameCount > 0) && (
         <p style={{ fontSize: 13, color: '#92660B', background: 'rgba(232,185,61,0.15)', padding: '8px 12px', borderRadius: 8, marginBottom: 16 }}>
-          This division already has {existingGameCount} game(s) scheduled. Generating again will ADD more games
-          alongside them, not replace them.
+          {draftGameCount > 0 && publishedGameCount > 0 && (
+            <>
+              This division has {publishedGameCount} published game(s) and {draftGameCount} draft game(s).
+              Generating will replace the {draftGameCount} draft game(s) with a fresh schedule — published games
+              are left alone.
+            </>
+          )}
+          {draftGameCount > 0 && publishedGameCount === 0 && (
+            <>
+              This division has {draftGameCount} draft game(s) from a previous generation. Generating again
+              replaces them with a fresh schedule reflecting current teams, blackouts, and field priorities.
+            </>
+          )}
+          {draftGameCount === 0 && publishedGameCount > 0 && (
+            <>
+              This division has {publishedGameCount} published game(s). Generating will add a new draft schedule
+              alongside them — published games are never changed or removed by generating.
+            </>
+          )}
         </p>
       )}
 
@@ -581,6 +658,9 @@ function ScheduleGenerator({
       {result && (
         <>
           <p style={{ color: 'var(--green-dark)', fontSize: 14, fontWeight: 600 }}>
+            {result.replacedCount > 0
+              ? `Replaced ${result.replacedCount} old draft game(s) — `
+              : ''}
             Created {result.gamesCreated} games across {result.weeksScheduled} round(s).
             {result.conflictsAvoided > 0 &&
               ` Skipped ${result.conflictsAvoided} slot(s) already booked by another event.`}
@@ -599,7 +679,11 @@ function ScheduleGenerator({
       )}
 
       <button onClick={handleGenerate} disabled={!canGenerate || submitting} className="btn-primary" style={{ width: '100%' }}>
-        {submitting ? 'Generating…' : `Generate schedule for ${divisionName}`}
+        {submitting
+          ? 'Generating…'
+          : draftGameCount > 0
+          ? `Regenerate schedule for ${divisionName}`
+          : `Generate schedule for ${divisionName}`}
       </button>
       {!canGenerate && (
         <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: 8 }}>

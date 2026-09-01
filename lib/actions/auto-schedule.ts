@@ -177,6 +177,7 @@ function isBlackedOut(date: Date, time: string, field: string, blackouts: Blacko
 type GenerateScheduleResult =
   | {
       gamesCreated: number;
+      replacedCount: number;
       weeksScheduled: number;
       conflictsAvoided: number;
       blackoutsSkipped: number;
@@ -250,17 +251,24 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
 
     // ---- Step 2: existing events across the WHOLE organization (any
     // season, any division) in this date range, so a field shared with
-    // another division doesn't get double-booked ----
+    // another division doesn't get double-booked. This division's own
+    // DRAFT games are excluded from the conflict set — regenerating
+    // replaces them (see Step 5), so they're not real commitments to
+    // avoid double-booking against; its own PUBLISHED games (and every
+    // other division's events, draft or published) still block. ----
     const { data: existingEvents } = await admin
       .from('events')
-      .select('location, start_time')
+      .select('location, start_time, division_id, status')
       .eq('organization_id', input.organizationId)
       .neq('status', 'canceled')
       .not('location', 'is', null)
       .gte('start_time', new Date(input.startDate + 'T00:00:00').toISOString())
       .lte('start_time', new Date(input.endDate + 'T23:59:59').toISOString());
 
-    const occupied = new Set((existingEvents ?? []).map((e) => `${e.location}|${e.start_time}`));
+    const relevantExistingEvents = (existingEvents ?? []).filter(
+      (e) => !(e.division_id === input.divisionId && e.status === 'draft')
+    );
+    const occupied = new Set(relevantExistingEvents.map((e) => `${e.location}|${e.start_time}`));
 
     // ---- Step 2b: this season's blackouts (migration 0017) — holidays,
     // field closures, standing conflicts. Scoped to the season, not the
@@ -453,14 +461,57 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
       return { error: 'Every configured slot in that date range is already taken by another event.' };
     }
 
+    // ---- Step 5: replace this division's previous DRAFT games with the
+    // freshly computed set — this is what makes "Generate" mean
+    // "regenerate from current teams/blackouts/priorities" instead of
+    // silently piling duplicate games on top of the old ones. Only
+    // reaches here once eventsToInsert is confirmed non-empty, so a
+    // generation that fails to produce anything never wipes out a
+    // working draft schedule. PUBLISHED games are never touched — those
+    // are treated as committed and are only removed manually. ----
+    const { data: deletedRows, error: deleteError } = await admin
+      .from('events')
+      .delete()
+      .eq('division_id', input.divisionId)
+      .eq('type', 'game')
+      .eq('status', 'draft')
+      .select('id');
+
+    if (deleteError) {
+      return { error: `Failed to clear the previous draft schedule: ${deleteError.message}` };
+    }
+
+    const replacedCount = deletedRows?.length ?? 0;
+
     const { error } = await admin.from('events').insert(eventsToInsert);
 
     if (error) {
       return { error: `Failed to create schedule: ${error.message}` };
     }
 
+    // ---- Step 6: remember these inputs (migration 0019) so the Season
+    // Builder form can restore them next time instead of starting blank,
+    // and so a later regenerate is a single click. Best-effort — the
+    // schedule itself already succeeded above, so a failure here doesn't
+    // fail the whole generation, it just means the form won't pre-fill
+    // next visit. ----
+    await admin.from('schedule_generation_settings').upsert(
+      {
+        organization_id: input.organizationId,
+        division_id: input.divisionId,
+        day_slots: input.daySlots,
+        games_per_team: input.gamesPerTeam,
+        game_duration_minutes: input.gameDurationMinutes,
+        start_date: input.startDate,
+        end_date: input.endDate,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'division_id' }
+    );
+
     return {
       gamesCreated: eventsToInsert.length,
+      replacedCount,
       weeksScheduled: weekNumber,
       conflictsAvoided,
       blackoutsSkipped,
