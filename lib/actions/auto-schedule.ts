@@ -216,13 +216,20 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     // season realistic: each team plays once on a given game day, not
     // multiple times just because extra slots happened to be available.
     // A round that's too big for one date's available slots spills onto
-    // the next date(s) before advancing to the next round. Slots already
-    // taken by another event (any division) are skipped entirely. Every
-    // date processed — even one where every slot turned out to be
-    // conflict-blocked — still consumes a week number, since "week" here
-    // tracks the season's calendar structure, not how many games actually
-    // landed on it. Stops as soon as every team has reached gamesPerTeam
-    // (or the date range runs out first). ----
+    // the next date(s) before advancing to the next round.
+    //
+    // week_number tracks the ROUND, not the calendar date: every team
+    // plays at most once per round, so the round index IS "which numbered
+    // game is this for the team" — exactly the weekday/weekend-game
+    // numbering the feature was built for. It only increments when a
+    // fresh round actually starts being placed. A round that spills across
+    // two calendar dates (like a Monday game finishing on Wednesday
+    // because Monday only had one open slot) keeps the SAME week number
+    // across both dates — they're still that round's games. A date with
+    // zero open slots (fully conflict-blocked) doesn't consume a week
+    // number either, since nothing happened on it for anyone. Stops as
+    // soon as every team has reached gamesPerTeam (or the date range runs
+    // out first). ----
     const eventsToInsert: Array<{
       organization_id: string;
       season_id: string;
@@ -239,15 +246,13 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     let roundIndex = 0;
     let pendingMatchups: [string, string][] = [...cycleRounds[0]];
     let conflictsAvoided = 0;
-    let weekNumber = 0;
+    let weekNumber = 1; // round 0 is already "week" 1
 
     const gamesPlayed = new Map<string, number>(teamIds.map((id) => [id, 0]));
     const targetReachedFor = () =>
       teamIds.every((id) => (gamesPlayed.get(id) ?? 0) >= input.gamesPerTeam);
 
     for (const date of gameDates) {
-      weekNumber++;
-
       const configuredSlots = slotsByDay.get(date.getDay())!;
       const availableSlots = configuredSlots.filter((slot) => {
         const isoTime = zonedDateTimeToIso(date, slot.time, timeZone);
@@ -261,6 +266,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
       if (pendingMatchups.length === 0) {
         roundIndex = (roundIndex + 1) % cycleRounds.length;
         pendingMatchups = [...cycleRounds[roundIndex]];
+        weekNumber++;
       }
 
       const forThisDate = pendingMatchups.splice(0, availableSlots.length);
