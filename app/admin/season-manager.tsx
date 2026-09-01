@@ -3,10 +3,11 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { createSeason, setSeasonArchived, deleteSeason } from '@/lib/actions/seasons';
+import { createSeason, setSeasonArchived, deleteSeason, updateSeasonAgeCutoff } from '@/lib/actions/seasons';
 import { createDivision, updateDivisionPriority } from '@/lib/actions/divisions';
 import { createField, deleteField } from '@/lib/actions/fields';
 import { setFieldPriority, removeFieldPriority } from '@/lib/actions/field-priorities';
+import { upsertRegistrationSettings } from '@/lib/actions/registration-settings';
 
 interface Season {
   id: string;
@@ -14,6 +15,22 @@ interface Season {
   status: string;
   registration_open_at: string | null;
   registration_close_at: string | null;
+  age_cutoff_date: string | null;
+}
+
+// One row per season (0020_registration_and_household.sql) — the fixed set
+// of optional fields the front-end registration form shows/requires.
+interface RegistrationSettings {
+  season_id: string;
+  require_waiver: boolean;
+  waiver_text: string | null;
+  require_birth_certificate: boolean;
+  offer_jersey_size: boolean;
+  jersey_sizes: string[];
+  offer_hat_size: boolean;
+  hat_sizes: string[];
+  offer_jersey_number: boolean;
+  offer_years_experience: boolean;
 }
 
 interface Division {
@@ -49,6 +66,7 @@ export default function SeasonManager({
   teamCounts,
   initialFields,
   initialFieldPriorities,
+  initialRegistrationSettings,
 }: {
   organizationId: string;
   initialSeasons: Season[];
@@ -56,11 +74,20 @@ export default function SeasonManager({
   teamCounts: Record<string, number>;
   initialFields: Field[];
   initialFieldPriorities: FieldPriority[];
+  initialRegistrationSettings: RegistrationSettings[];
 }) {
   const [seasons, setSeasons] = useState(initialSeasons);
   const [divisions, setDivisions] = useState(initialDivisions);
   const [fields, setFields] = useState(initialFields);
   const [fieldPriorities, setFieldPriorities] = useState(initialFieldPriorities);
+  const [registrationSettings, setRegistrationSettings] = useState(initialRegistrationSettings);
+
+  function handleRegistrationSettingsChanged(settings: RegistrationSettings) {
+    setRegistrationSettings((prev) => {
+      const withoutThisSeason = prev.filter((s) => s.season_id !== settings.season_id);
+      return [...withoutThisSeason, settings];
+    });
+  }
 
   // Shared by both editing surfaces (the Fields panel and each division
   // row) — upserts one (field, division) rank in local state to match
@@ -83,6 +110,7 @@ export default function SeasonManager({
   const [seasonName, setSeasonName] = useState('');
   const [regOpen, setRegOpen] = useState('');
   const [regClose, setRegClose] = useState('');
+  const [ageCutoff, setAgeCutoff] = useState('');
   const [creatingSeason, setCreatingSeason] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -96,6 +124,7 @@ export default function SeasonManager({
         name: seasonName,
         registrationOpenAt: regOpen ? new Date(regOpen).toISOString() : undefined,
         registrationCloseAt: regClose ? new Date(regClose).toISOString() : undefined,
+        ageCutoffDate: ageCutoff || undefined,
       });
       if ('error' in result) {
         setError(result.error);
@@ -108,12 +137,14 @@ export default function SeasonManager({
           status: 'draft',
           registration_open_at: regOpen ? new Date(regOpen).toISOString() : null,
           registration_close_at: regClose ? new Date(regClose).toISOString() : null,
+          age_cutoff_date: ageCutoff || null,
         },
         ...prev,
       ]);
       setSeasonName('');
       setRegOpen('');
       setRegClose('');
+      setAgeCutoff('');
       setShowSeasonForm(false);
     } catch (err: any) {
       setError(err.message);
@@ -134,6 +165,10 @@ export default function SeasonManager({
     setSeasons((prev) =>
       prev.map((s) => (s.id === seasonId ? { ...s, status: archived ? 'archived' : 'draft' } : s))
     );
+  }
+
+  function handleAgeCutoffChanged(seasonId: string, ageCutoffDate: string | null) {
+    setSeasons((prev) => prev.map((s) => (s.id === seasonId ? { ...s, age_cutoff_date: ageCutoffDate } : s)));
   }
 
   function handleSeasonDeleted(seasonId: string) {
@@ -182,6 +217,12 @@ export default function SeasonManager({
             <input type="date" value={regOpen} onChange={(e) => setRegOpen(e.target.value)} className="form-input" />
             <label className="form-label">Registration closes (optional)</label>
             <input type="date" value={regClose} onChange={(e) => setRegClose(e.target.value)} className="form-input" />
+            <label className="form-label">Age cutoff date (optional)</label>
+            <input type="date" value={ageCutoff} onChange={(e) => setAgeCutoff(e.target.value)} className="form-input" />
+            <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -12, marginBottom: 16 }}>
+              Player age for division eligibility is computed as of this date (e.g. many leagues use 8/1 or 1/1).
+              Leave blank if your divisions aren&apos;t age-restricted.
+            </p>
             <button type="submit" disabled={creatingSeason || !seasonName} className="btn-primary" style={{ width: '100%' }}>
               {creatingSeason ? 'Creating…' : 'Create season'}
             </button>
@@ -202,12 +243,15 @@ export default function SeasonManager({
           teamCounts={teamCounts}
           fields={fields}
           fieldPriorities={fieldPriorities}
+          registrationSettings={registrationSettings.find((s) => s.season_id === season.id) ?? null}
           onDivisionCreated={handleDivisionCreated}
           onPriorityChanged={handlePriorityChanged}
           onFieldPriorityChanged={applyFieldPriority}
           onFieldPriorityRemoved={removeFieldPriorityLocal}
           onArchiveChanged={handleSeasonArchiveChanged}
           onDeleted={handleSeasonDeleted}
+          onRegistrationSettingsChanged={handleRegistrationSettingsChanged}
+          onAgeCutoffChanged={handleAgeCutoffChanged}
         />
       ))}
 
@@ -226,12 +270,15 @@ export default function SeasonManager({
                 teamCounts={teamCounts}
                 fields={fields}
                 fieldPriorities={fieldPriorities}
+                registrationSettings={registrationSettings.find((s) => s.season_id === season.id) ?? null}
                 onDivisionCreated={handleDivisionCreated}
                 onPriorityChanged={handlePriorityChanged}
                 onFieldPriorityChanged={applyFieldPriority}
                 onFieldPriorityRemoved={removeFieldPriorityLocal}
                 onArchiveChanged={handleSeasonArchiveChanged}
                 onDeleted={handleSeasonDeleted}
+                onRegistrationSettingsChanged={handleRegistrationSettingsChanged}
+                onAgeCutoffChanged={handleAgeCutoffChanged}
               />
             ))}
         </div>
@@ -498,12 +545,15 @@ function SeasonCard({
   teamCounts,
   fields,
   fieldPriorities,
+  registrationSettings,
   onDivisionCreated,
   onPriorityChanged,
   onFieldPriorityChanged,
   onFieldPriorityRemoved,
   onArchiveChanged,
   onDeleted,
+  onRegistrationSettingsChanged,
+  onAgeCutoffChanged,
 }: {
   organizationId: string;
   season: Season;
@@ -511,14 +561,19 @@ function SeasonCard({
   teamCounts: Record<string, number>;
   fields: Field[];
   fieldPriorities: FieldPriority[];
+  registrationSettings: RegistrationSettings | null;
   onDivisionCreated: (d: Division) => void;
   onPriorityChanged: (divisionId: string, priority: number) => void;
   onFieldPriorityChanged: (fieldId: string, divisionId: string, priority: number) => void;
   onFieldPriorityRemoved: (fieldId: string, divisionId: string) => void;
   onArchiveChanged: (seasonId: string, archived: boolean) => void;
   onDeleted: (seasonId: string) => void;
+  onRegistrationSettingsChanged: (settings: RegistrationSettings) => void;
+  onAgeCutoffChanged: (seasonId: string, ageCutoffDate: string | null) => void;
 }) {
   const [showForm, setShowForm] = useState(false);
+  const [showRegSettings, setShowRegSettings] = useState(false);
+  const [ageCutoffSaving, setAgeCutoffSaving] = useState(false);
   const [name, setName] = useState('');
   const [ageMin, setAgeMin] = useState('');
   const [ageMax, setAgeMax] = useState('');
@@ -634,6 +689,28 @@ function SeasonCard({
             {season.registration_open_at &&
               ` · registration opens ${new Date(season.registration_open_at).toLocaleDateString()}`}
           </p>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--gray)', marginTop: 6 }}>
+            Age cutoff date
+            <input
+              type="date"
+              defaultValue={season.age_cutoff_date ?? ''}
+              disabled={ageCutoffSaving}
+              onBlur={async (e) => {
+                const value = e.target.value || null;
+                if (value === season.age_cutoff_date) return;
+                setAgeCutoffSaving(true);
+                const result = await updateSeasonAgeCutoff(organizationId, season.id, value);
+                setAgeCutoffSaving(false);
+                if (result && 'error' in result) {
+                  setError(result.error);
+                  return;
+                }
+                onAgeCutoffChanged(season.id, value);
+              }}
+              className="form-input"
+              style={{ width: 150, marginBottom: 0, padding: '4px 6px' }}
+            />
+          </label>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {!isArchived && (
@@ -641,6 +718,9 @@ function SeasonCard({
               {showForm ? 'Cancel' : '+ Add division'}
             </button>
           )}
+          <button onClick={() => setShowRegSettings((s) => !s)} className="btn-small">
+            {showRegSettings ? 'Hide registration settings' : 'Registration settings'}
+          </button>
           <button onClick={handleToggleArchive} disabled={archiving} className="btn-small">
             {archiving ? '…' : isArchived ? 'Unarchive' : 'Archive'}
           </button>
@@ -651,6 +731,15 @@ function SeasonCard({
       </div>
 
       {error && <p style={{ color: '#B23A2E', fontSize: 14, marginTop: 8 }}>{error}</p>}
+
+      {showRegSettings && (
+        <RegistrationSettingsPanel
+          organizationId={organizationId}
+          seasonId={season.id}
+          settings={registrationSettings}
+          onChanged={onRegistrationSettingsChanged}
+        />
+      )}
 
       {showForm && (
         <form onSubmit={handleCreate} style={{ marginTop: 16 }}>
@@ -880,6 +969,176 @@ function DivisionFieldPriorityEditor({
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+// Admin-configurable set of optional registration fields for one season —
+// see 0020_registration_and_household.sql. Fixed field set (not a form
+// builder): waiver, birth certificate, jersey/hat size, jersey number,
+// years experience, each toggleable on/off, matching how Evan described
+// SportsConnect/SportsEngine-style registration configuration.
+function RegistrationSettingsPanel({
+  organizationId,
+  seasonId,
+  settings,
+  onChanged,
+}: {
+  organizationId: string;
+  seasonId: string;
+  settings: RegistrationSettings | null;
+  onChanged: (settings: RegistrationSettings) => void;
+}) {
+  const [requireWaiver, setRequireWaiver] = useState(settings?.require_waiver ?? false);
+  const [waiverText, setWaiverText] = useState(settings?.waiver_text ?? '');
+  const [requireBirthCertificate, setRequireBirthCertificate] = useState(
+    settings?.require_birth_certificate ?? false
+  );
+  const [offerJerseySize, setOfferJerseySize] = useState(settings?.offer_jersey_size ?? false);
+  const [jerseySizesText, setJerseySizesText] = useState((settings?.jersey_sizes ?? []).join(', '));
+  const [offerHatSize, setOfferHatSize] = useState(settings?.offer_hat_size ?? false);
+  const [hatSizesText, setHatSizesText] = useState((settings?.hat_sizes ?? []).join(', '));
+  const [offerJerseyNumber, setOfferJerseyNumber] = useState(settings?.offer_jersey_number ?? false);
+  const [offerYearsExperience, setOfferYearsExperience] = useState(settings?.offer_years_experience ?? false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  function parseSizes(text: string): string[] {
+    return text
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    const jerseySizes = parseSizes(jerseySizesText);
+    const hatSizes = parseSizes(hatSizesText);
+
+    const result = await upsertRegistrationSettings({
+      organizationId,
+      seasonId,
+      requireWaiver,
+      waiverText,
+      requireBirthCertificate,
+      offerJerseySize,
+      jerseySizes,
+      offerHatSize,
+      hatSizes,
+      offerJerseyNumber,
+      offerYearsExperience,
+    });
+
+    setSaving(false);
+
+    if (result && 'error' in result) {
+      setError(result.error);
+      return;
+    }
+
+    onChanged({
+      season_id: seasonId,
+      require_waiver: requireWaiver,
+      waiver_text: waiverText.trim() || null,
+      require_birth_certificate: requireBirthCertificate,
+      offer_jersey_size: offerJerseySize,
+      jersey_sizes: jerseySizes,
+      offer_hat_size: offerHatSize,
+      hat_sizes: hatSizes,
+      offer_jersey_number: offerJerseyNumber,
+      offer_years_experience: offerYearsExperience,
+    });
+    setSaved(true);
+  }
+
+  return (
+    <div style={{ padding: '14px 16px', background: 'var(--cream)', borderRadius: 8, margin: '4px 0 16px' }}>
+      <p style={{ fontSize: 12, color: 'var(--gray)', margin: '0 0 12px' }}>
+        Choose which fields families see on the registration form for this season. Waiver and birth certificate can
+        be required; the rest are optional collection fields.
+      </p>
+
+      {error && <p style={{ color: '#B23A2E', fontSize: 13 }}>{error}</p>}
+
+      <label className="radio-option" style={{ marginBottom: 4 }}>
+        <input type="checkbox" checked={requireWaiver} onChange={(e) => setRequireWaiver(e.target.checked)} />
+        <span className="radio-option-label">Require a signed waiver</span>
+      </label>
+      {requireWaiver && (
+        <textarea
+          value={waiverText}
+          onChange={(e) => setWaiverText(e.target.value)}
+          placeholder="Waiver text shown to the registrant before they sign…"
+          className="form-input"
+          rows={3}
+          style={{ marginBottom: 12 }}
+        />
+      )}
+
+      <label className="radio-option" style={{ marginBottom: 12 }}>
+        <input
+          type="checkbox"
+          checked={requireBirthCertificate}
+          onChange={(e) => setRequireBirthCertificate(e.target.checked)}
+        />
+        <span className="radio-option-label">Require a birth certificate upload</span>
+      </label>
+
+      <label className="radio-option" style={{ marginBottom: 4 }}>
+        <input type="checkbox" checked={offerJerseySize} onChange={(e) => setOfferJerseySize(e.target.checked)} />
+        <span className="radio-option-label">Collect jersey size</span>
+      </label>
+      {offerJerseySize && (
+        <input
+          value={jerseySizesText}
+          onChange={(e) => setJerseySizesText(e.target.value)}
+          placeholder="Comma-separated sizes, e.g. YS, YM, YL, AS, AM, AL"
+          className="form-input"
+          style={{ marginBottom: 12 }}
+        />
+      )}
+
+      <label className="radio-option" style={{ marginBottom: 4 }}>
+        <input type="checkbox" checked={offerHatSize} onChange={(e) => setOfferHatSize(e.target.checked)} />
+        <span className="radio-option-label">Collect hat size</span>
+      </label>
+      {offerHatSize && (
+        <input
+          value={hatSizesText}
+          onChange={(e) => setHatSizesText(e.target.value)}
+          placeholder="Comma-separated sizes, e.g. S/M, L/XL"
+          className="form-input"
+          style={{ marginBottom: 12 }}
+        />
+      )}
+
+      <label className="radio-option" style={{ marginBottom: 4 }}>
+        <input
+          type="checkbox"
+          checked={offerJerseyNumber}
+          onChange={(e) => setOfferJerseyNumber(e.target.checked)}
+        />
+        <span className="radio-option-label">Collect requested jersey number</span>
+      </label>
+
+      <label className="radio-option" style={{ marginBottom: 12 }}>
+        <input
+          type="checkbox"
+          checked={offerYearsExperience}
+          onChange={(e) => setOfferYearsExperience(e.target.checked)}
+        />
+        <span className="radio-option-label">Collect years of experience</span>
+      </label>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <button type="button" onClick={handleSave} disabled={saving} className="btn-primary">
+          {saving ? 'Saving…' : 'Save registration settings'}
+        </button>
+        {saved && <span style={{ fontSize: 12, color: 'var(--green-dark)' }}>Saved</span>}
+      </div>
     </div>
   );
 }

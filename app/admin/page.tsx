@@ -44,7 +44,7 @@ export default async function AdminDashboardPage() {
 
   const { data: seasons } = await supabase
     .from('seasons')
-    .select('id, name, status, registration_open_at, registration_close_at')
+    .select('id, name, status, registration_open_at, registration_close_at, age_cutoff_date')
     .eq('organization_id', org.organizationId)
     .order('created_at', { ascending: false });
 
@@ -82,6 +82,15 @@ export default async function AdminDashboardPage() {
         .eq('organization_id', org.organizationId)
     : { data: [] as any[] };
 
+  const { data: registrationSettings } = seasonIds.length
+    ? await supabase
+        .from('registration_settings')
+        .select(
+          'season_id, require_waiver, waiver_text, require_birth_certificate, offer_jersey_size, jersey_sizes, offer_hat_size, hat_sizes, offer_jersey_number, offer_years_experience'
+        )
+        .in('season_id', seasonIds)
+    : { data: [] as any[] };
+
   return (
     <div className="admin-page">
       <Nav />
@@ -98,6 +107,7 @@ export default async function AdminDashboardPage() {
           teamCounts={teamCounts}
           initialFields={fields ?? []}
           initialFieldPriorities={(fieldPriorities as any) ?? []}
+          initialRegistrationSettings={(registrationSettings as any) ?? []}
         />
       </div>
     </div>

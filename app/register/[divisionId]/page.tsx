@@ -6,10 +6,13 @@ import Nav from '@/components/nav';
 
 export default async function RegisterForDivisionPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ divisionId: string }>;
+  searchParams: Promise<{ personId?: string }>;
 }) {
   const { divisionId } = await params;
+  const { personId: requestedPersonId } = await searchParams;
   const supabase = await createClient();
 
   const {
@@ -26,7 +29,7 @@ export default async function RegisterForDivisionPage({
       `
       id, name, age_min, age_max, price_cents,
       season:seasons!inner (
-        id, name,
+        id, name, age_cutoff_date,
         organization:organizations!inner ( id, name )
       )
     `
@@ -47,13 +50,13 @@ export default async function RegisterForDivisionPage({
     );
   }
 
-  const { data: person } = await supabase
+  const { data: selfPerson } = await supabase
     .from('people')
-    .select('id')
+    .select('id, first_name, last_name, dob')
     .eq('auth_user_id', user.id)
     .single();
 
-  if (!person) {
+  if (!selfPerson) {
     return (
       <div>
         <Nav />
@@ -64,7 +67,32 @@ export default async function RegisterForDivisionPage({
     );
   }
 
+  const { data: guardianRows } = await supabase
+    .from('guardians')
+    .select('dependent:people!guardians_dependent_person_id_fkey ( id, first_name, last_name, dob )')
+    .eq('guardian_person_id', selfPerson.id);
+
+  const dependents = (guardianRows ?? [])
+    .map((row: any) => row.dependent)
+    .filter(Boolean) as { id: string; first_name: string; last_name: string; dob: string | null }[];
+
+  const household = [
+    { ...selfPerson, isSelf: true },
+    ...dependents.map((d) => ({ ...d, isSelf: false })),
+  ];
+
+  const initialPersonId =
+    requestedPersonId && household.some((h) => h.id === requestedPersonId) ? requestedPersonId : selfPerson.id;
+
   const d = division as any;
+
+  const { data: registrationSettings } = await supabase
+    .from('registration_settings')
+    .select(
+      'require_waiver, waiver_text, require_birth_certificate, offer_jersey_size, jersey_sizes, offer_hat_size, hat_sizes, offer_jersey_number, offer_years_experience'
+    )
+    .eq('season_id', d.season.id)
+    .maybeSingle();
 
   return (
     <div>
@@ -78,12 +106,17 @@ export default async function RegisterForDivisionPage({
         <RegistrationForm
           divisionId={d.id}
           divisionName={d.name}
+          ageMin={d.age_min}
+          ageMax={d.age_max}
+          ageCutoffDate={d.season.age_cutoff_date}
           seasonId={d.season.id}
           seasonName={d.season.name}
           organizationId={d.season.organization.id}
           organizationName={d.season.organization.name}
           priceCents={d.price_cents}
-          personId={person.id}
+          household={household as any}
+          initialPersonId={initialPersonId}
+          registrationSettings={(registrationSettings as any) ?? null}
         />
       </div>
     </div>

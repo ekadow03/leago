@@ -27,6 +27,9 @@ export default async function Nav() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         {user ? (
           <>
+            <Link href="/dashboard" className="btn-small" style={{ textDecoration: 'none' }}>
+              Dashboard
+            </Link>
             <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>{user.email}</span>
             <form action={logOut}>
               <button type="submit" className="btn-small">

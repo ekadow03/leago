@@ -15,6 +15,7 @@ interface CreateSeasonInput {
   name: string;
   registrationOpenAt?: string;
   registrationCloseAt?: string;
+  ageCutoffDate?: string;
 }
 
 type CreateSeasonResult = { id: string } | { error: string };
@@ -40,6 +41,7 @@ export async function createSeason(input: CreateSeasonInput): Promise<CreateSeas
         status: 'draft',
         registration_open_at: input.registrationOpenAt || null,
         registration_close_at: input.registrationCloseAt || null,
+        age_cutoff_date: input.ageCutoffDate || null,
       })
       .select('id')
       .single();
@@ -160,6 +162,52 @@ export async function deleteSeason(organizationId: string, seasonId: string): Pr
 
     if (error) {
       return { error: `Failed to delete season: ${error.message}` };
+    }
+
+    return { ok: true };
+  } catch (err) {
+    return {
+      error: err instanceof Error ? `Unexpected server error: ${err.message}` : 'Unexpected server error.',
+    };
+  }
+}
+
+
+type UpdateSeasonAgeCutoffResult = { ok: true } | { error: string };
+
+/** Editable after creation since the cutoff date is usually decided once
+ * divisions' age ranges are locked in, not necessarily at season-creation
+ * time. Null clears it (season goes back to not age-gating registration). */
+export async function updateSeasonAgeCutoff(
+  organizationId: string,
+  seasonId: string,
+  ageCutoffDate: string | null
+): Promise<UpdateSeasonAgeCutoffResult> {
+  try {
+    const isAdmin = await requireOrgAdmin(organizationId);
+    if (!isAdmin) {
+      return { error: 'Only an organization admin can change the age cutoff date.' };
+    }
+
+    const admin = createAdminClient();
+
+    const { data: season } = await admin
+      .from('seasons')
+      .select('id, organization_id')
+      .eq('id', seasonId)
+      .single();
+
+    if (!season || season.organization_id !== organizationId) {
+      return { error: 'Season not found for this organization.' };
+    }
+
+    const { error } = await admin
+      .from('seasons')
+      .update({ age_cutoff_date: ageCutoffDate })
+      .eq('id', seasonId);
+
+    if (error) {
+      return { error: `Failed to update age cutoff date: ${error.message}` };
     }
 
     return { ok: true };
