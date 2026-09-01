@@ -70,6 +70,12 @@ export default async function SeasonBuilderPage({
     .eq('division_id', divisionId)
     .eq('type', 'game');
 
+  const { data: orgFields } = await supabase
+    .from('fields')
+    .select('id, name')
+    .eq('organization_id', organizationId)
+    .order('name', { ascending: true });
+
   return (
     <div className="admin-page">
       <Nav />
@@ -88,6 +94,7 @@ export default async function SeasonBuilderPage({
           divisionName={division.name}
           initialTeams={teams ?? []}
           existingGameCount={(existingGames as any)?.count ?? 0}
+          orgFields={orgFields ?? []}
         />
       </div>
     </div>

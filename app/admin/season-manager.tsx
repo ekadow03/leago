@@ -4,7 +4,8 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { createSeason } from '@/lib/actions/seasons';
-import { createDivision } from '@/lib/actions/divisions';
+import { createDivision, updateDivisionPriority } from '@/lib/actions/divisions';
+import { createField, deleteField } from '@/lib/actions/fields';
 
 interface Season {
   id: string;
@@ -21,6 +22,12 @@ interface Division {
   age_min: number | null;
   age_max: number | null;
   price_cents: number;
+  schedule_priority: number;
+}
+
+interface Field {
+  id: string;
+  name: string;
 }
 
 export default function SeasonManager({
@@ -28,14 +35,17 @@ export default function SeasonManager({
   initialSeasons,
   initialDivisions,
   teamCounts,
+  initialFields,
 }: {
   organizationId: string;
   initialSeasons: Season[];
   initialDivisions: Division[];
   teamCounts: Record<string, number>;
+  initialFields: Field[];
 }) {
   const [seasons, setSeasons] = useState(initialSeasons);
   const [divisions, setDivisions] = useState(initialDivisions);
+  const [fields, setFields] = useState(initialFields);
   const [showSeasonForm, setShowSeasonForm] = useState(initialSeasons.length === 0);
   const [seasonName, setSeasonName] = useState('');
   const [regOpen, setRegOpen] = useState('');
@@ -83,9 +93,15 @@ export default function SeasonManager({
     setDivisions((prev) => [...prev, division]);
   }
 
+  function handlePriorityChanged(divisionId: string, priority: number) {
+    setDivisions((prev) => prev.map((d) => (d.id === divisionId ? { ...d, schedule_priority: priority } : d)));
+  }
+
   return (
     <div>
       {error && <p style={{ color: '#B23A2E', marginBottom: 12 }}>{error}</p>}
+
+      <FieldsPanel organizationId={organizationId} fields={fields} onFieldsChange={setFields} />
 
       <div className="form-card" style={{ marginBottom: 32 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -128,8 +144,102 @@ export default function SeasonManager({
           divisions={divisions.filter((d) => d.season_id === season.id)}
           teamCounts={teamCounts}
           onDivisionCreated={handleDivisionCreated}
+          onPriorityChanged={handlePriorityChanged}
         />
       ))}
+    </div>
+  );
+}
+
+function FieldsPanel({
+  organizationId,
+  fields,
+  onFieldsChange,
+}: {
+  organizationId: string;
+  fields: Field[];
+  onFieldsChange: (fields: Field[]) => void;
+}) {
+  const [newFieldName, setNewFieldName] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleAdd() {
+    const trimmed = newFieldName.trim();
+    if (!trimmed) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const result = await createField(organizationId, trimmed);
+      if ('error' in result) {
+        setError(result.error);
+        return;
+      }
+      if (!fields.some((f) => f.id === result.id)) {
+        onFieldsChange([...fields, { id: result.id, name: result.name }].sort((a, b) => a.name.localeCompare(b.name)));
+      }
+      setNewFieldName('');
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleRemove(fieldId: string) {
+    if (!confirm('Remove this field? Divisions that already reference it in a generated schedule are unaffected.')) return;
+    setError(null);
+    try {
+      const result = await deleteField(organizationId, fieldId);
+      if ('error' in result) {
+        setError(result.error);
+        return;
+      }
+      onFieldsChange(fields.filter((f) => f.id !== fieldId));
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <div className="form-card" style={{ marginBottom: 32 }}>
+      <h2 style={{ margin: 0 }}>Fields</h2>
+      <p style={{ fontSize: 13, color: 'var(--gray)', marginTop: 4 }}>
+        One shared list of physical fields/courts for this organization, used when building any division&apos;s
+        schedule. Keeping field names here (instead of retyping them per division) is what lets the schedule
+        generator reliably catch two divisions being booked onto the same field at the same time.
+      </p>
+
+      {error && <p style={{ color: '#B23A2E', fontSize: 14 }}>{error}</p>}
+
+      {fields.length > 0 && (
+        <div className="chip-list" style={{ marginTop: 12 }}>
+          {fields.map((f) => (
+            <span key={f.id} className="chip">
+              {f.name}
+              <button type="button" onClick={() => handleRemove(f.id)}>
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {fields.length === 0 && (
+        <p style={{ color: 'var(--gray)', fontSize: 13, marginTop: 12 }}>No fields added yet.</p>
+      )}
+
+      <div className="add-chip-row" style={{ marginTop: 12 }}>
+        <input
+          value={newFieldName}
+          onChange={(e) => setNewFieldName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAdd())}
+          className="form-input"
+          placeholder="e.g. Field 1"
+        />
+        <button type="button" onClick={handleAdd} disabled={submitting || !newFieldName.trim()} className="btn-small">
+          {submitting ? 'Adding…' : '+ Add field'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -140,12 +250,14 @@ function SeasonCard({
   divisions,
   teamCounts,
   onDivisionCreated,
+  onPriorityChanged,
 }: {
   organizationId: string;
   season: Season;
   divisions: Division[];
   teamCounts: Record<string, number>;
   onDivisionCreated: (d: Division) => void;
+  onPriorityChanged: (divisionId: string, priority: number) => void;
 }) {
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('');
@@ -180,6 +292,7 @@ function SeasonCard({
         age_min: ageMin ? Number(ageMin) : null,
         age_max: ageMax ? Number(ageMax) : null,
         price_cents: priceCents,
+        schedule_priority: 0,
       });
       setName('');
       setAgeMin('');
@@ -192,6 +305,10 @@ function SeasonCard({
       setSubmitting(false);
     }
   }
+
+  const sortedDivisions = [...divisions].sort(
+    (a, b) => a.schedule_priority - b.schedule_priority || a.name.localeCompare(b.name)
+  );
 
   return (
     <div className="form-card" style={{ marginBottom: 24 }}>
@@ -242,9 +359,17 @@ function SeasonCard({
         <p style={{ color: 'var(--gray)', marginTop: 16 }}>No divisions yet.</p>
       )}
 
+      {divisions.length > 1 && (
+        <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: 16, marginBottom: 0 }}>
+          Sharing fields between these divisions? Set a priority below (lower number = generate its schedule
+          first) so you know which order to click &quot;Generate schedule&quot; in — whichever division generates
+          first claims a shared field/time slot.
+        </p>
+      )}
+
       {divisions.length > 0 && (
         <div className="data-table-card" style={{ marginTop: 16 }}>
-          {divisions.map((d) => {
+          {sortedDivisions.map((d) => {
             const count = teamCounts[d.id] ?? 0;
             return (
               <div key={d.id} className="data-row">
@@ -255,7 +380,25 @@ function SeasonCard({
                     {d.price_cents > 0 ? `$${(d.price_cents / 100).toFixed(2)}` : 'Free'} · {count} team{count === 1 ? '' : 's'}
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {divisions.length > 1 && (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--gray)' }}>
+                      Priority
+                      <input
+                        type="number"
+                        defaultValue={d.schedule_priority}
+                        onBlur={(e) => {
+                          const value = Number(e.target.value);
+                          if (Number.isFinite(value) && value !== d.schedule_priority) {
+                            updateDivisionPriority(organizationId, d.id, value);
+                            onPriorityChanged(d.id, value);
+                          }
+                        }}
+                        className="form-input"
+                        style={{ width: 56, marginBottom: 0, padding: '4px 6px' }}
+                      />
+                    </label>
+                  )}
                   <Link href={`/admin/season-builder/${d.id}`} className="btn-small">
                     Teams &amp; schedule
                   </Link>

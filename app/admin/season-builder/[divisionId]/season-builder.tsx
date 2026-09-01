@@ -6,8 +6,14 @@ import Link from 'next/link';
 import { bulkCreateTeams } from '@/lib/actions/team-import';
 import { createTeam } from '@/lib/actions/teams';
 import { generateSeasonSchedule } from '@/lib/actions/auto-schedule';
+import { createField } from '@/lib/actions/fields';
 
 interface Team {
+  id: string;
+  name: string;
+}
+
+interface OrgField {
   id: string;
   name: string;
 }
@@ -33,6 +39,7 @@ export default function SeasonBuilder({
   divisionName,
   initialTeams,
   existingGameCount,
+  orgFields,
 }: {
   organizationId: string;
   seasonId: string;
@@ -40,6 +47,7 @@ export default function SeasonBuilder({
   divisionName: string;
   initialTeams: Team[];
   existingGameCount: number;
+  orgFields: OrgField[];
 }) {
   const [teams, setTeams] = useState(initialTeams);
 
@@ -58,6 +66,7 @@ export default function SeasonBuilder({
         divisionName={divisionName}
         teamCount={teams.length}
         existingGameCount={existingGameCount}
+        orgFields={orgFields}
       />
     </div>
   );
@@ -310,6 +319,7 @@ function ScheduleGenerator({
   divisionName,
   teamCount,
   existingGameCount,
+  orgFields,
 }: {
   organizationId: string;
   seasonId: string;
@@ -317,9 +327,20 @@ function ScheduleGenerator({
   divisionName: string;
   teamCount: number;
   existingGameCount: number;
+  orgFields: OrgField[];
 }) {
+  // Fields selected for THIS division's schedule — a subset of the
+  // organization's shared field registry (migration 0016). Picking from
+  // that shared list, rather than free-typing a name per division, is
+  // what keeps generateSeasonSchedule()'s cross-division conflict check
+  // reliable: it matches on the literal location string, so "Field 1"
+  // typed twice with different casing would otherwise silently defeat it.
+  const [availableOrgFields, setAvailableOrgFields] = useState<OrgField[]>(orgFields);
   const [fields, setFields] = useState<string[]>([]);
-  const [newField, setNewField] = useState('');
+  const [fieldToAdd, setFieldToAdd] = useState('');
+  const [newFieldName, setNewFieldName] = useState('');
+  const [addingField, setAddingField] = useState(false);
+  const [fieldError, setFieldError] = useState<string | null>(null);
   const [activeDays, setActiveDays] = useState<number[]>([]);
   const [daySlots, setDaySlots] = useState<Record<number, TimeGroup[]>>({});
   const [gamesPerTeam, setGamesPerTeam] = useState('');
@@ -334,11 +355,40 @@ function ScheduleGenerator({
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  function addField() {
-    const trimmed = newField.trim();
-    if (trimmed && !fields.includes(trimmed)) {
-      setFields((prev) => [...prev, trimmed]);
-      setNewField('');
+  // Adds an already-registered org field to THIS division's active list
+  // — no server call needed, it's already in the shared registry.
+  function addExistingField() {
+    if (fieldToAdd && !fields.includes(fieldToAdd)) {
+      setFields((prev) => [...prev, fieldToAdd]);
+    }
+    setFieldToAdd('');
+  }
+
+  // Registers a brand-new field name with the organization (so every
+  // other division can pick it from the dropdown too, instead of
+  // retyping it) and activates it for this division's schedule.
+  async function addNewField() {
+    const trimmed = newFieldName.trim();
+    if (!trimmed) return;
+    setAddingField(true);
+    setFieldError(null);
+    try {
+      const result = await createField(organizationId, trimmed);
+      if ('error' in result) {
+        setFieldError(result.error);
+        return;
+      }
+      setAvailableOrgFields((prev) =>
+        prev.some((f) => f.id === result.id)
+          ? prev
+          : [...prev, { id: result.id, name: result.name }].sort((a, b) => a.name.localeCompare(b.name))
+      );
+      setFields((prev) => (prev.includes(result.name) ? prev : [...prev, result.name]));
+      setNewFieldName('');
+    } catch (err: any) {
+      setFieldError(err.message);
+    } finally {
+      setAddingField(false);
     }
   }
 
@@ -469,6 +519,10 @@ function ScheduleGenerator({
       )}
 
       <label className="form-label">Fields</label>
+      <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -8, marginBottom: 12 }}>
+        Fields come from your organization&apos;s shared field list (manage the full list from the admin Dashboard)
+        so that a game booked here is recognized as a conflict by every other division&apos;s schedule too.
+      </p>
       {fields.length > 0 && (
         <div className="chip-list">
           {fields.map((f) => (
@@ -479,16 +533,37 @@ function ScheduleGenerator({
           ))}
         </div>
       )}
+
+      {fieldError && <p style={{ color: '#B23A2E', fontSize: 13 }}>{fieldError}</p>}
+
+      {availableOrgFields.filter((f) => !fields.includes(f.name)).length > 0 && (
+        <div className="add-chip-row">
+          <select value={fieldToAdd} onChange={(e) => setFieldToAdd(e.target.value)} className="form-input">
+            <option value="">Choose a field…</option>
+            {availableOrgFields
+              .filter((f) => !fields.includes(f.name))
+              .map((f) => (
+                <option key={f.id} value={f.name}>
+                  {f.name}
+                </option>
+              ))}
+          </select>
+          <button onClick={addExistingField} disabled={!fieldToAdd} className="btn-small">
+            + Add field
+          </button>
+        </div>
+      )}
+
       <div className="add-chip-row">
         <input
-          value={newField}
-          onChange={(e) => setNewField(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addField())}
+          value={newFieldName}
+          onChange={(e) => setNewFieldName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addNewField())}
           className="form-input"
-          placeholder="e.g. Field 1"
+          placeholder="Not listed? Add a new field, e.g. Field 3"
         />
-        <button onClick={addField} className="btn-small">
-          + Add field
+        <button onClick={addNewField} disabled={addingField || !newFieldName.trim()} className="btn-small">
+          {addingField ? 'Adding…' : '+ New field'}
         </button>
       </div>
 

@@ -53,7 +53,7 @@ export default async function AdminDashboardPage() {
   const { data: divisions } = seasonIds.length
     ? await supabase
         .from('divisions')
-        .select('id, season_id, name, age_min, age_max, price_cents')
+        .select('id, season_id, name, age_min, age_max, price_cents, schedule_priority')
         .in('season_id', seasonIds)
         .order('name', { ascending: true })
     : { data: [] as any[] };
@@ -69,6 +69,12 @@ export default async function AdminDashboardPage() {
     teamCounts[t.division_id] = (teamCounts[t.division_id] ?? 0) + 1;
   });
 
+  const { data: fields } = await supabase
+    .from('fields')
+    .select('id, name')
+    .eq('organization_id', org.organizationId)
+    .order('name', { ascending: true });
+
   return (
     <div className="admin-page">
       <Nav />
@@ -83,6 +89,7 @@ export default async function AdminDashboardPage() {
           initialSeasons={seasons ?? []}
           initialDivisions={(divisions as any) ?? []}
           teamCounts={teamCounts}
+          initialFields={fields ?? []}
         />
       </div>
     </div>

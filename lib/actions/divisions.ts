@@ -71,3 +71,54 @@ export async function createDivision(input: CreateDivisionInput): Promise<Create
     };
   }
 }
+
+type UpdatePriorityResult = { ok: true } | { error: string };
+
+/** Advisory ranking only — see migration 0016. Lower number means this
+ * division should have its schedule generated first when it shares a
+ * field with other divisions in the same organization; does not itself
+ * touch any events. */
+export async function updateDivisionPriority(
+  organizationId: string,
+  divisionId: string,
+  priority: number
+): Promise<UpdatePriorityResult> {
+  try {
+    const isAdmin = await requireOrgAdmin(organizationId);
+    if (!isAdmin) {
+      return { error: 'Only an organization admin can reorder divisions.' };
+    }
+
+    if (!Number.isFinite(priority)) {
+      return { error: 'Priority must be a number.' };
+    }
+
+    const admin = createAdminClient();
+
+    const { data: division } = await admin
+      .from('divisions')
+      .select('id, seasons ( organization_id )')
+      .eq('id', divisionId)
+      .single();
+
+    const orgId = (division?.seasons as any)?.organization_id;
+    if (!division || orgId !== organizationId) {
+      return { error: 'Division not found for this organization.' };
+    }
+
+    const { error } = await admin
+      .from('divisions')
+      .update({ schedule_priority: priority })
+      .eq('id', divisionId);
+
+    if (error) {
+      return { error: `Failed to update priority: ${error.message}` };
+    }
+
+    return { ok: true };
+  } catch (err) {
+    return {
+      error: err instanceof Error ? `Unexpected server error: ${err.message}` : 'Unexpected server error.',
+    };
+  }
+}
