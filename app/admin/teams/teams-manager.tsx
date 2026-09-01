@@ -161,15 +161,16 @@ function BulkImportPanel({
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
 
+  // One column per division (its name is the header), one team name per
+  // row underneath its division's column — divisions with fewer teams
+  // just leave the rest of that column blank, since the number of teams
+  // rarely matches across divisions.
   function handleDownloadTemplate() {
-    const rows: string[][] = [['division', 'team_name']];
-    if (divisionsForSeason.length > 0) {
-      divisionsForSeason.forEach((d, i) => {
-        rows.push([d.name, i === 0 ? 'Red Sox' : i === 1 ? 'Blue Jays' : 'Team Name']);
-      });
-    } else {
-      rows.push(['10U', 'Red Sox'], ['12U', 'Blue Jays']);
-    }
+    const columns = divisionsForSeason.length > 0 ? divisionsForSeason.map((d) => d.name) : ['10U', '12U'];
+    const sampleNames = ['Red Sox', 'Blue Jays', 'Eagles', 'Wildcats'];
+    const rows: string[][] = [columns];
+    rows.push(columns.map((_, i) => sampleNames[i] ?? 'Team Name'));
+    rows.push(columns.map((_, i) => (i === 0 ? 'Yankees' : '')));
     downloadCsv('team-template.csv', rows);
   }
 
@@ -188,44 +189,49 @@ function BulkImportPanel({
         throw new Error('That file is empty.');
       }
 
-      const header = parseCsvLine(lines[0]).map((h) => h.toLowerCase());
-      const divisionColIdx = header.indexOf('division');
-      const teamColIdx = header.indexOf('team_name');
-      if (divisionColIdx === -1 || teamColIdx === -1) {
-        throw new Error('The CSV needs "division" and "team_name" columns — download the template for the exact format.');
+      const header = parseCsvLine(lines[0]);
+      if (header.length === 0 || header.every((h) => !h.trim())) {
+        throw new Error('The CSV needs a division name in each column header — download the template for the exact format.');
       }
 
       const rows = lines.slice(1).map(parseCsvLine);
 
-      // Group requested team names by division name (case/whitespace
-      // insensitive), matched against this SEASON's real divisions —
-      // matching by name only within one season avoids ambiguity if two
-      // different seasons happen to reuse a division name like "10U".
+      // Each COLUMN is a division (matched by header name, case/whitespace
+      // insensitive, against this SEASON's real divisions — matching by
+      // name only within one season avoids ambiguity if two different
+      // seasons happen to reuse a division name like "10U"). Every
+      // non-blank cell below it, down every row, is one team name for
+      // that division — columns don't need the same number of filled-in
+      // rows, since divisions rarely have the same team count.
+      const columnDivisions = header.map((name) =>
+        divisionsForSeason.find((d) => d.name.toLowerCase() === name.trim().toLowerCase())
+      );
+
       const namesByDivisionId = new Map<string, string[]>();
       const unmatched = new Set<string>();
 
+      header.forEach((name, colIdx) => {
+        if (!name.trim()) return;
+        if (!columnDivisions[colIdx]) unmatched.add(name.trim());
+      });
+
       for (const row of rows) {
-        const divisionName = (row[divisionColIdx] ?? '').trim();
-        const teamName = (row[teamColIdx] ?? '').trim();
-        if (!divisionName || !teamName) continue;
+        header.forEach((_, colIdx) => {
+          const division = columnDivisions[colIdx];
+          if (!division) return;
+          const teamName = (row[colIdx] ?? '').trim();
+          if (!teamName) return;
 
-        const division = divisionsForSeason.find(
-          (d) => d.name.toLowerCase() === divisionName.toLowerCase()
-        );
-        if (!division) {
-          unmatched.add(divisionName);
-          continue;
-        }
-
-        const list = namesByDivisionId.get(division.id) ?? [];
-        list.push(teamName);
-        namesByDivisionId.set(division.id, list);
+          const list = namesByDivisionId.get(division.id) ?? [];
+          list.push(teamName);
+          namesByDivisionId.set(division.id, list);
+        });
       }
 
       if (namesByDivisionId.size === 0) {
         throw new Error(
           unmatched.size > 0
-            ? `No rows matched a division in this season. Unrecognized division name(s): ${Array.from(unmatched).join(', ')}.`
+            ? `No columns matched a division in this season. Unrecognized column header(s): ${Array.from(unmatched).join(', ')}.`
             : 'No valid rows found in that file.'
         );
       }
@@ -251,7 +257,7 @@ function BulkImportPanel({
       onImported(createdTeams);
 
       const parts = [`Imported ${totalCreated} team(s).`];
-      if (unmatched.size > 0) parts.push(`Skipped unrecognized division(s): ${Array.from(unmatched).join(', ')}.`);
+      if (unmatched.size > 0) parts.push(`Skipped unrecognized column(s): ${Array.from(unmatched).join(', ')}.`);
       if (failures.length > 0) parts.push(`Errors: ${failures.join('; ')}`);
       setSummary(parts.join(' '));
     } catch (err: any) {
@@ -266,8 +272,10 @@ function BulkImportPanel({
     <div className="form-card" style={{ marginBottom: 24 }}>
       <h2 style={{ margin: 0 }}>Bulk import</h2>
       <p style={{ fontSize: 13, color: 'var(--gray)', marginTop: 4, marginBottom: 12 }}>
-        Download the template for this season (pre-filled with its actual division names), fill in a row per
-        team, and upload it back — teams get sorted into the right division automatically.
+        Download the template for this season (one column per division, pre-filled with its actual division
+        names), list each division&apos;s team names down its column, and upload it back — teams get sorted into
+        the right division automatically. Columns don&apos;t need to line up in length; leave the rest of a
+        shorter division&apos;s column blank.
       </p>
 
       {error && <p style={{ color: '#B23A2E', fontSize: 14 }}>{error}</p>}
