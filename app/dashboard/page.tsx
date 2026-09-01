@@ -42,8 +42,32 @@ export default async function DashboardPage() {
     return (
       <div>
         <Nav />
-        <div style={{ maxWidth: 480, margin: '80px auto', textAlign: 'center' }}>
+        <div style={{ maxWidth: 640, margin: '80px auto', textAlign: 'center' }}>
           <p style={{ color: '#B23A2E' }}>No profile found for your account. Contact support.</p>
+          {/* TEMPORARY: surfacing the raw Postgrest error inline so it can
+              be diagnosed without digging through Vercel's log viewer.
+              Remove once the underlying issue is found. */}
+          <pre
+            style={{
+              textAlign: 'left',
+              background: '#f4f4f4',
+              padding: 16,
+              borderRadius: 8,
+              overflowX: 'auto',
+              fontSize: 12,
+              marginTop: 24,
+            }}
+          >
+            {JSON.stringify(
+              {
+                authUserId: user.id,
+                email: user.email,
+                error: selfPersonError,
+              },
+              null,
+              2
+            )}
+          </pre>
         </div>
       </div>
     );

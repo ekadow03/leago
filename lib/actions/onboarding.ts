@@ -55,7 +55,16 @@ export async function createLeagueOrganization(input: CreateLeagueInput): Promis
         email: user.email,
         error: personError,
       });
-      return { error: 'No profile found for your account.' };
+      // TEMPORARY: include the raw Postgrest error in the message shown
+      // to the user so it can be diagnosed without digging through
+      // Vercel's log viewer. Remove once the underlying issue is found.
+      return {
+        error: `No profile found for your account. [debug: ${JSON.stringify({
+          authUserId: user.id,
+          email: user.email,
+          error: personError,
+        })}]`,
+      };
     }
 
     const admin = createAdminClient();
