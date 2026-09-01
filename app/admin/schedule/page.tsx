@@ -39,19 +39,21 @@ export default async function AdminSchedulePage() {
     .eq('organization_id', org.organizationId)
     .order('created_at', { ascending: false });
 
+  const { data: divisions } = await supabase
+    .from('divisions')
+    .select('id, name, season_id')
+    .in('season_id', (seasons ?? []).map((s) => s.id));
+
   const { data: teams } = await supabase
     .from('teams')
     .select('id, name, division_id, divisions ( name )')
-    .in(
-      'division_id',
-      (
-        await supabase.from('divisions').select('id').in('season_id', (seasons ?? []).map((s) => s.id))
-      ).data?.map((d) => d.id) ?? []
-    );
+    .in('division_id', (divisions ?? []).map((d) => d.id));
 
   const { data: events } = await supabase
     .from('events')
-    .select('id, type, title, location, start_time, status, season_id, home_team_id, away_team_id')
+    .select(
+      'id, type, title, location, start_time, status, season_id, division_id, home_team_id, away_team_id, week_number'
+    )
     .eq('organization_id', org.organizationId)
     .order('start_time', { ascending: true });
 
@@ -68,6 +70,7 @@ export default async function AdminSchedulePage() {
           organizationId={org.organizationId}
           organizationName={org.organizationName}
           seasons={seasons ?? []}
+          divisions={divisions ?? []}
           teams={(teams as any) ?? []}
           initialEvents={events ?? []}
         />

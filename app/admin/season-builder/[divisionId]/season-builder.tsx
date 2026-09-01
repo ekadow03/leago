@@ -322,12 +322,16 @@ function ScheduleGenerator({
   const [newField, setNewField] = useState('');
   const [activeDays, setActiveDays] = useState<number[]>([]);
   const [daySlots, setDaySlots] = useState<Record<number, TimeGroup[]>>({});
+  const [gamesPerTeam, setGamesPerTeam] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ gamesCreated: number; seasonDatesUsed: number; conflictsAvoided: number } | null>(
-    null
-  );
+  const [result, setResult] = useState<{
+    gamesCreated: number;
+    weeksScheduled: number;
+    conflictsAvoided: number;
+    targetReached: boolean;
+  } | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   function addField() {
@@ -401,7 +405,14 @@ function ScheduleGenerator({
     (sum, groups) => sum + groups.reduce((s, g) => s + g.fields.length, 0),
     0
   );
-  const canGenerate = teamCount >= 2 && totalSlots > 0 && !!startDate && !!endDate;
+  const gamesPerTeamNum = Number(gamesPerTeam);
+  const canGenerate =
+    teamCount >= 2 &&
+    totalSlots > 0 &&
+    !!startDate &&
+    !!endDate &&
+    Number.isFinite(gamesPerTeamNum) &&
+    gamesPerTeamNum >= 1;
 
   async function handleGenerate() {
     setSubmitting(true);
@@ -416,6 +427,7 @@ function ScheduleGenerator({
         seasonId,
         divisionId,
         daySlots: flatSlots,
+        gamesPerTeam: gamesPerTeamNum,
         startDate,
         endDate,
       });
@@ -508,19 +520,43 @@ function ScheduleGenerator({
         />
       ))}
 
+      <label className="form-label">Regular season games per team</label>
+      <input
+        type="number"
+        min={1}
+        value={gamesPerTeam}
+        onChange={(e) => setGamesPerTeam(e.target.value)}
+        className="form-input"
+        placeholder="e.g. 12"
+        style={{ maxWidth: 120 }}
+      />
+      <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -4, marginBottom: 12 }}>
+        Schedule generation stops once every team has reached this many games, even if the end date hasn&apos;t
+        been reached yet. If the date range and slots run out first, some teams may fall short — you&apos;ll see a
+        warning below when that happens.
+      </p>
+
       <label className="form-label">Season start date</label>
       <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="form-input" />
 
-      <label className="form-label">Season end date</label>
+      <label className="form-label">Season end date (last possible day)</label>
       <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="form-input" />
 
       {error && <p style={{ color: '#B23A2E', fontSize: 14 }}>{error}</p>}
       {result && (
-        <p style={{ color: 'var(--green-dark)', fontSize: 14, fontWeight: 600 }}>
-          Created {result.gamesCreated} games across {result.seasonDatesUsed} game dates.
-          {result.conflictsAvoided > 0 &&
-            ` Skipped ${result.conflictsAvoided} slot(s) already booked by another event.`}
-        </p>
+        <>
+          <p style={{ color: 'var(--green-dark)', fontSize: 14, fontWeight: 600 }}>
+            Created {result.gamesCreated} games across {result.weeksScheduled} week(s).
+            {result.conflictsAvoided > 0 &&
+              ` Skipped ${result.conflictsAvoided} slot(s) already booked by another event.`}
+          </p>
+          {!result.targetReached && (
+            <p style={{ color: '#B23A2E', fontSize: 13, marginTop: -4 }}>
+              Heads up: not every team reached {gamesPerTeamNum} games before the end date. Add more times/fields,
+              extend the end date, or lower the games-per-team target and regenerate.
+            </p>
+          )}
+        </>
       )}
 
       <button onClick={handleGenerate} disabled={!canGenerate || submitting} className="btn-primary" style={{ width: '100%' }}>
@@ -528,7 +564,8 @@ function ScheduleGenerator({
       </button>
       {!canGenerate && (
         <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: 8 }}>
-          Need at least 2 teams, at least one time with a field added, and both dates set.
+          Need at least 2 teams, at least one time with a field added, a games-per-team target of 1 or more, and
+          both dates set.
         </p>
       )}
     </div>

@@ -144,3 +144,93 @@ export async function deleteEvent(organizationId: string, eventId: string): Prom
     return unexpectedError(err);
   }
 }
+
+type DeleteEventsResult = { count: number } | { error: string };
+
+/** Bulk delete — used by the schedule builder's multi-select "Delete
+ * selected" action, and to clear a division's draft schedule before
+ * regenerating it. Scoped to organizationId server-side (not just
+ * trusted from the client) so a caller can't delete another org's
+ * events by passing arbitrary ids. */
+export async function deleteEvents(organizationId: string, eventIds: string[]): Promise<DeleteEventsResult> {
+  try {
+    const isAdmin = await requireOrgAdmin(organizationId);
+    if (!isAdmin) {
+      return { error: 'Only an organization admin can delete events.' };
+    }
+
+    if (eventIds.length === 0) {
+      return { count: 0 };
+    }
+
+    const admin = createAdminClient();
+    const { error, data } = await admin
+      .from('events')
+      .delete()
+      .eq('organization_id', organizationId)
+      .in('id', eventIds)
+      .select('id');
+
+    if (error) {
+      return { error: `Failed to delete events: ${error.message}` };
+    }
+
+    return { count: data?.length ?? 0 };
+  } catch (err) {
+    return unexpectedError(err);
+  }
+}
+
+interface UpdateEventInput {
+  organizationId: string;
+  eventId: string;
+  title?: string;
+  location?: string | null;
+  startTime?: string;
+  homeTeamId?: string | null;
+  awayTeamId?: string | null;
+  weekNumber?: number | null;
+}
+
+type UpdateEventResult = { ok: true } | { error: string };
+
+/** Manual edit for an existing event — the generator and the single-add
+ * form only ever create events, so this is the only way to change a
+ * game's time, field, teams, or week label after the fact without
+ * deleting and recreating it. Only fields actually provided are
+ * changed. */
+export async function updateEvent(input: UpdateEventInput): Promise<UpdateEventResult> {
+  try {
+    const isAdmin = await requireOrgAdmin(input.organizationId);
+    if (!isAdmin) {
+      return { error: 'Only an organization admin can edit events.' };
+    }
+
+    const patch: Record<string, unknown> = {};
+    if (input.title !== undefined) patch.title = input.title;
+    if (input.location !== undefined) patch.location = input.location;
+    if (input.startTime !== undefined) patch.start_time = input.startTime;
+    if (input.homeTeamId !== undefined) patch.home_team_id = input.homeTeamId;
+    if (input.awayTeamId !== undefined) patch.away_team_id = input.awayTeamId;
+    if (input.weekNumber !== undefined) patch.week_number = input.weekNumber;
+
+    if (Object.keys(patch).length === 0) {
+      return { ok: true };
+    }
+
+    const admin = createAdminClient();
+    const { error } = await admin
+      .from('events')
+      .update(patch)
+      .eq('id', input.eventId)
+      .eq('organization_id', input.organizationId);
+
+    if (error) {
+      return { error: `Failed to update event: ${error.message}` };
+    }
+
+    return { ok: true };
+  } catch (err) {
+    return unexpectedError(err);
+  }
+}

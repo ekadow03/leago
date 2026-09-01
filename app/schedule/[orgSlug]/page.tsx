@@ -31,7 +31,7 @@ export default async function PublicSchedulePage({
     .from('events')
     .select(
       `
-      id, type, title, location, start_time,
+      id, type, title, location, start_time, week_number,
       home_team:teams!events_home_team_id_fkey ( name ),
       away_team:teams!events_away_team_id_fkey ( name )
     `
@@ -78,6 +78,9 @@ export default async function PublicSchedulePage({
                     ? `${ev.home_team.name} vs ${ev.away_team.name}`
                     : ev.title}
                   <span className="event-badge">{ev.type.replace('_', ' ')}</span>
+                  {ev.type === 'game' && ev.week_number != null && (
+                    <span className="event-badge">Week {ev.week_number}</span>
+                  )}
                 </div>
                 <div className="schedule-event-meta">
                   {new Date(ev.start_time).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}

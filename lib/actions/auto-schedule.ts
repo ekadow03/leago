@@ -5,9 +5,11 @@
 // Generates a full SEASON-LONG schedule, not a single round-robin pass.
 // A rec league season needs teams to play repeatedly across many weeks,
 // so this builds one fair round-robin cycle (every team plays every team
-// once) and then REPEATS that cycle across every available game date
-// until the season's date range is filled — spreading games evenly
-// rather than compressing everyone's matchups into the first week or two.
+// once) and then REPEATS that cycle across every available game date —
+// stopping once every team has reached the target number of games
+// (gamesPerTeam), or once the season's end date is reached, whichever
+// comes first. The end date is a hard backstop, not the primary driver of
+// how long the season runs — gamesPerTeam is.
 //
 // Each day of the week carries its own list of (time, field) slots,
 // rather than one flat set of times/fields applied to every selected
@@ -20,6 +22,10 @@
 // for that same field and exact time, and skips slots that are already
 // taken. That's what keeps two divisions sharing the same physical field
 // from getting double-booked into the same game.
+//
+// Every game created in one generation run also gets a week_number —
+// see the comment on that column (migration 0014) for what it means and
+// why it isn't a real calendar week.
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOrgAdmin } from '@/lib/org-context';
@@ -35,8 +41,9 @@ interface GenerateScheduleInput {
   seasonId: string;
   divisionId: string;
   daySlots: DaySlotInput[];
+  gamesPerTeam: number;
   startDate: string; // "2026-09-01"
-  endDate: string; // "2026-11-15"
+  endDate: string; // "2026-11-15" — a hard cap, not a target
 }
 
 /**
@@ -78,7 +85,7 @@ function formatDateAtTime(date: Date, time: string): string {
 }
 
 type GenerateScheduleResult =
-  | { gamesCreated: number; seasonDatesUsed: number; conflictsAvoided: number }
+  | { gamesCreated: number; weeksScheduled: number; conflictsAvoided: number; targetReached: boolean }
   | { error: string };
 
 export async function generateSeasonSchedule(input: GenerateScheduleInput): Promise<GenerateScheduleResult> {
@@ -93,6 +100,9 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     }
     if (!input.startDate || !input.endDate) {
       return { error: 'Set both a season start and end date.' };
+    }
+    if (!Number.isFinite(input.gamesPerTeam) || input.gamesPerTeam < 1) {
+      return { error: 'Set how many games each team should play (at least 1).' };
     }
 
     const admin = createAdminClient();
@@ -120,7 +130,8 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     }
 
     // ---- Step 1: every actual calendar date in range that has at least
-    // one configured slot for its day of week ----
+    // one configured slot for its day of week (endDate is a hard cap on
+    // how far this ever looks, not a target) ----
     const gameDates: Date[] = [];
     const cursor = new Date(input.startDate + 'T00:00:00');
     const end = new Date(input.endDate + 'T00:00:00');
@@ -161,7 +172,12 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     // multiple times just because extra slots happened to be available.
     // A round that's too big for one date's available slots spills onto
     // the next date(s) before advancing to the next round. Slots already
-    // taken by another event (any division) are skipped entirely. ----
+    // taken by another event (any division) are skipped entirely. Every
+    // date processed — even one where every slot turned out to be
+    // conflict-blocked — still consumes a week number, since "week" here
+    // tracks the season's calendar structure, not how many games actually
+    // landed on it. Stops as soon as every team has reached gamesPerTeam
+    // (or the date range runs out first). ----
     const eventsToInsert: Array<{
       organization_id: string;
       season_id: string;
@@ -173,14 +189,21 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
       home_team_id: string;
       away_team_id: string;
       status: 'draft';
+      week_number: number;
     }> = [];
     let roundIndex = 0;
     let pendingMatchups: [string, string][] = [...cycleRounds[0]];
     let conflictsAvoided = 0;
+    let weekNumber = 0;
+
+    const gamesPlayed = new Map<string, number>(teamIds.map((id) => [id, 0]));
+    const targetReachedFor = () =>
+      teamIds.every((id) => (gamesPlayed.get(id) ?? 0) >= input.gamesPerTeam);
 
     for (const date of gameDates) {
-      const configuredSlots = slotsByDay.get(date.getDay())!;
+      weekNumber++;
 
+      const configuredSlots = slotsByDay.get(date.getDay())!;
       const availableSlots = configuredSlots.filter((slot) => {
         const isoTime = formatDateAtTime(date, slot.time);
         const taken = occupied.has(`${slot.field}|${isoTime}`);
@@ -211,13 +234,19 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
           home_team_id: homeId,
           away_team_id: awayId,
           status: 'draft',
+          week_number: weekNumber,
         });
+
+        gamesPlayed.set(homeId, (gamesPlayed.get(homeId) ?? 0) + 1);
+        gamesPlayed.set(awayId, (gamesPlayed.get(awayId) ?? 0) + 1);
 
         // Reserve this slot for the rest of this generation run too, in
         // case it's reachable more than once (shouldn't normally happen,
         // but cheap to guard against).
         occupied.add(`${slot.field}|${isoTime}`);
       });
+
+      if (targetReachedFor()) break;
     }
 
     if (eventsToInsert.length === 0) {
@@ -232,8 +261,9 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
 
     return {
       gamesCreated: eventsToInsert.length,
-      seasonDatesUsed: gameDates.length,
+      weeksScheduled: weekNumber,
       conflictsAvoided,
+      targetReached: targetReachedFor(),
     };
   } catch (err) {
     return {
