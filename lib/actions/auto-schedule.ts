@@ -61,17 +61,19 @@ function formatDateAtTime(date: Date, time: string): string {
   return d.toISOString();
 }
 
+type GenerateScheduleResult = { gamesCreated: number; seasonDatesUsed: number } | { error: string };
+
 export async function generateSeasonSchedule(
   input: GenerateScheduleInput
-): Promise<{ gamesCreated: number; seasonDatesUsed: number }> {
+): Promise<GenerateScheduleResult> {
   const isAdmin = await requireOrgAdmin(input.organizationId);
   if (!isAdmin) {
-    throw new Error('Only an organization admin can generate a schedule.');
+    return { error: 'Only an organization admin can generate a schedule.' };
   }
 
-  if (input.daysOfWeek.length === 0) throw new Error('Select at least one day of the week.');
-  if (input.times.length === 0) throw new Error('Add at least one time slot.');
-  if (input.fields.length === 0) throw new Error('Add at least one field.');
+  if (input.daysOfWeek.length === 0) return { error: 'Select at least one day of the week.' };
+  if (input.times.length === 0) return { error: 'Add at least one time slot.' };
+  if (input.fields.length === 0) return { error: 'Add at least one field.' };
 
   const admin = createAdminClient();
 
@@ -82,7 +84,7 @@ export async function generateSeasonSchedule(
 
   const teamIds = (teams ?? []).map((t) => t.id);
   if (teamIds.length < 2) {
-    throw new Error('Need at least 2 teams in this division to generate a schedule.');
+    return { error: 'Need at least 2 teams in this division to generate a schedule.' };
   }
 
   // ---- Step 1: every actual calendar date in range matching selected weekdays ----
@@ -97,7 +99,7 @@ export async function generateSeasonSchedule(
   }
 
   if (gameDates.length === 0) {
-    throw new Error('No game dates fall within that range on the selected days of the week.');
+    return { error: 'No game dates fall within that range on the selected days of the week.' };
   }
 
   // ---- Step 2: how many game slots exist on any single date ----
@@ -150,7 +152,7 @@ export async function generateSeasonSchedule(
   const { error } = await admin.from('events').insert(eventsToInsert);
 
   if (error) {
-    throw new Error(`Failed to create schedule: ${error.message}`);
+    return { error: `Failed to create schedule: ${error.message}` };
   }
 
   return { gamesCreated: eventsToInsert.length, seasonDatesUsed: gameDates.length };

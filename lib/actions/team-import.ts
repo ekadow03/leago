@@ -9,20 +9,22 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOrgAdmin } from '@/lib/org-context';
 
+type BulkCreateTeamsResult = { count: number } | { error: string };
+
 export async function bulkCreateTeams(
   organizationId: string,
   divisionId: string,
   teamNames: string[]
-): Promise<{ count: number }> {
+): Promise<BulkCreateTeamsResult> {
   const isAdmin = await requireOrgAdmin(organizationId);
   if (!isAdmin) {
-    throw new Error('Only an organization admin can import teams.');
+    return { error: 'Only an organization admin can import teams.' };
   }
 
   const cleaned = teamNames.map((n) => n.trim()).filter((n) => n.length > 0);
 
   if (cleaned.length === 0) {
-    throw new Error('No valid team names found in the file.');
+    return { error: 'No valid team names found in the file.' };
   }
 
   const admin = createAdminClient();
@@ -32,7 +34,7 @@ export async function bulkCreateTeams(
     .insert(cleaned.map((name) => ({ division_id: divisionId, name })));
 
   if (error) {
-    throw new Error(`Failed to import teams: ${error.message}`);
+    return { error: `Failed to import teams: ${error.message}` };
   }
 
   return { count: cleaned.length };

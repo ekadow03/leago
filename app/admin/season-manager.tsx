@@ -54,6 +54,10 @@ export default function SeasonManager({
         registrationOpenAt: regOpen ? new Date(regOpen).toISOString() : undefined,
         registrationCloseAt: regClose ? new Date(regClose).toISOString() : undefined,
       });
+      if ('error' in result) {
+        setError(result.error);
+        return;
+      }
       setSeasons((prev) => [
         {
           id: result.id,
@@ -165,6 +169,10 @@ function SeasonCard({
         ageMax: ageMax ? Number(ageMax) : undefined,
         priceCents,
       });
+      if ('error' in result) {
+        setError(result.error);
+        return;
+      }
       onDivisionCreated({
         id: result.id,
         season_id: season.id,

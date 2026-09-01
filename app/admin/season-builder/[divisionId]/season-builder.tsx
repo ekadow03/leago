@@ -90,6 +90,9 @@ function TeamImport({
       }
 
       const result = await bulkCreateTeams(organizationId, divisionId, dataLines);
+      if ('error' in result) {
+        throw new Error(result.error);
+      }
       // Re-derive the new list is simplest via a light reload of just the
       // names we just sent — real IDs will show correctly after a page
       // refresh, but this keeps the UI responsive immediately.
@@ -201,6 +204,10 @@ function ScheduleGenerator({
         startDate,
         endDate,
       });
+      if ('error' in res) {
+        setError(res.error);
+        return;
+      }
       setResult(res);
     } catch (err: any) {
       setError(err.message);

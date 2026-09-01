@@ -1,6 +1,10 @@
 'use server';
 
 // lib/actions/divisions.ts
+//
+// Returns { error } instead of throwing — see the comment in
+// lib/actions/onboarding.ts for why (Next.js redacts thrown Server Action
+// error messages in production builds).
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOrgAdmin } from '@/lib/org-context';
@@ -14,14 +18,16 @@ interface CreateDivisionInput {
   priceCents?: number;
 }
 
-export async function createDivision(input: CreateDivisionInput): Promise<{ id: string }> {
+type CreateDivisionResult = { id: string } | { error: string };
+
+export async function createDivision(input: CreateDivisionInput): Promise<CreateDivisionResult> {
   const isAdmin = await requireOrgAdmin(input.organizationId);
   if (!isAdmin) {
-    throw new Error('Only an organization admin can create a division.');
+    return { error: 'Only an organization admin can create a division.' };
   }
 
   if (!input.name.trim()) {
-    throw new Error('Division name is required.');
+    return { error: 'Division name is required.' };
   }
 
   const admin = createAdminClient();
@@ -37,7 +43,7 @@ export async function createDivision(input: CreateDivisionInput): Promise<{ id: 
     .single();
 
   if (!season || season.organization_id !== input.organizationId) {
-    throw new Error('Season not found for this organization.');
+    return { error: 'Season not found for this organization.' };
   }
 
   const { data, error } = await admin
@@ -53,7 +59,7 @@ export async function createDivision(input: CreateDivisionInput): Promise<{ id: 
     .single();
 
   if (error || !data) {
-    throw new Error(`Failed to create division: ${error?.message}`);
+    return { error: `Failed to create division: ${error?.message}` };
   }
 
   return { id: data.id };

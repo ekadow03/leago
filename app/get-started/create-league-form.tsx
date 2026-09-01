@@ -20,11 +20,15 @@ export default function CreateLeagueForm() {
     setSubmitting(true);
     setError(null);
     try {
-      await createLeagueOrganization({ name, slug: name });
+      const result = await createLeagueOrganization({ name, slug: name });
+      if ('error' in result) {
+        setError(result.error);
+        return;
+      }
       router.push('/admin');
       router.refresh();
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message ?? 'Something went wrong. Please try again.');
     } finally {
       setSubmitting(false);
     }

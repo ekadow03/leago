@@ -1,6 +1,10 @@
 'use server';
 
 // lib/actions/events.ts
+//
+// All four actions return { error } instead of throwing — see the comment
+// in lib/actions/onboarding.ts for why (Next.js redacts thrown Server
+// Action error messages in production builds).
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOrgAdmin } from '@/lib/org-context';
@@ -19,10 +23,12 @@ interface CreateEventInput {
   notes?: string;
 }
 
-export async function createEvent(input: CreateEventInput): Promise<{ id: string }> {
+type CreateEventResult = { id: string } | { error: string };
+
+export async function createEvent(input: CreateEventInput): Promise<CreateEventResult> {
   const isAdmin = await requireOrgAdmin(input.organizationId);
   if (!isAdmin) {
-    throw new Error('Only an organization admin can create schedule events.');
+    return { error: 'Only an organization admin can create schedule events.' };
   }
 
   const admin = createAdminClient();
@@ -47,34 +53,40 @@ export async function createEvent(input: CreateEventInput): Promise<{ id: string
     .single();
 
   if (error || !data) {
-    throw new Error(`Failed to create event: ${error?.message}`);
+    return { error: `Failed to create event: ${error?.message}` };
   }
 
   return { id: data.id };
 }
 
+type SetEventStatusResult = { ok: true } | { error: string };
+
 export async function setEventStatus(
   organizationId: string,
   eventId: string,
   status: 'draft' | 'published' | 'canceled'
-): Promise<void> {
+): Promise<SetEventStatusResult> {
   const isAdmin = await requireOrgAdmin(organizationId);
   if (!isAdmin) {
-    throw new Error('Only an organization admin can change event status.');
+    return { error: 'Only an organization admin can change event status.' };
   }
 
   const admin = createAdminClient();
   const { error } = await admin.from('events').update({ status }).eq('id', eventId);
 
   if (error) {
-    throw new Error(`Failed to update event status: ${error.message}`);
+    return { error: `Failed to update event status: ${error.message}` };
   }
+
+  return { ok: true };
 }
 
-export async function publishAllDraftEvents(organizationId: string, seasonId: string): Promise<{ count: number }> {
+type PublishAllResult = { count: number } | { error: string };
+
+export async function publishAllDraftEvents(organizationId: string, seasonId: string): Promise<PublishAllResult> {
   const isAdmin = await requireOrgAdmin(organizationId);
   if (!isAdmin) {
-    throw new Error('Only an organization admin can publish the schedule.');
+    return { error: 'Only an organization admin can publish the schedule.' };
   }
 
   const admin = createAdminClient();
@@ -87,22 +99,26 @@ export async function publishAllDraftEvents(organizationId: string, seasonId: st
     .select('id');
 
   if (error) {
-    throw new Error(`Failed to publish schedule: ${error.message}`);
+    return { error: `Failed to publish schedule: ${error.message}` };
   }
 
   return { count: data?.length ?? 0 };
 }
 
-export async function deleteEvent(organizationId: string, eventId: string): Promise<void> {
+type DeleteEventResult = { ok: true } | { error: string };
+
+export async function deleteEvent(organizationId: string, eventId: string): Promise<DeleteEventResult> {
   const isAdmin = await requireOrgAdmin(organizationId);
   if (!isAdmin) {
-    throw new Error('Only an organization admin can delete events.');
+    return { error: 'Only an organization admin can delete events.' };
   }
 
   const admin = createAdminClient();
   const { error } = await admin.from('events').delete().eq('id', eventId);
 
   if (error) {
-    throw new Error(`Failed to delete event: ${error.message}`);
+    return { error: `Failed to delete event: ${error.message}` };
   }
+
+  return { ok: true };
 }

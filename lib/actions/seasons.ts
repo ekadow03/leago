@@ -1,6 +1,10 @@
 'use server';
 
 // lib/actions/seasons.ts
+//
+// Returns { error } instead of throwing — see the comment in
+// lib/actions/onboarding.ts for why (Next.js redacts thrown Server Action
+// error messages in production builds).
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOrgAdmin } from '@/lib/org-context';
@@ -12,14 +16,16 @@ interface CreateSeasonInput {
   registrationCloseAt?: string;
 }
 
-export async function createSeason(input: CreateSeasonInput): Promise<{ id: string }> {
+type CreateSeasonResult = { id: string } | { error: string };
+
+export async function createSeason(input: CreateSeasonInput): Promise<CreateSeasonResult> {
   const isAdmin = await requireOrgAdmin(input.organizationId);
   if (!isAdmin) {
-    throw new Error('Only an organization admin can create a season.');
+    return { error: 'Only an organization admin can create a season.' };
   }
 
   if (!input.name.trim()) {
-    throw new Error('Season name is required.');
+    return { error: 'Season name is required.' };
   }
 
   const admin = createAdminClient();
@@ -37,7 +43,7 @@ export async function createSeason(input: CreateSeasonInput): Promise<{ id: stri
     .single();
 
   if (error || !data) {
-    throw new Error(`Failed to create season: ${error?.message}`);
+    return { error: `Failed to create season: ${error?.message}` };
   }
 
   return { id: data.id };

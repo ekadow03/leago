@@ -1,6 +1,13 @@
 'use server';
 
 // lib/actions/onboarding.ts
+//
+// Returns { error } instead of throwing on failure. Next.js redacts the
+// message of any Error thrown across the Server Action boundary in a
+// production build (you're left with a generic "Server Components render"
+// message and a digest, unless you dig through server logs) — returning a
+// plain object keeps the real message visible to the client, same pattern
+// already used in lib/actions/auth.ts.
 
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -10,20 +17,20 @@ interface CreateLeagueInput {
   slug: string;
 }
 
+type CreateLeagueResult = { organizationId: string; slug: string } | { error: string };
+
 function slugify(text: string): string {
   return text.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
-export async function createLeagueOrganization(
-  input: CreateLeagueInput
-): Promise<{ organizationId: string; slug: string }> {
+export async function createLeagueOrganization(input: CreateLeagueInput): Promise<CreateLeagueResult> {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
   if (!user) {
-    throw new Error('You must be logged in to create a league.');
+    return { error: 'You must be logged in to create a league.' };
   }
 
   const { data: person } = await supabase
@@ -33,7 +40,7 @@ export async function createLeagueOrganization(
     .single();
 
   if (!person) {
-    throw new Error('No profile found for your account.');
+    return { error: 'No profile found for your account.' };
   }
 
   const admin = createAdminClient();
@@ -53,9 +60,9 @@ export async function createLeagueOrganization(
 
   if (orgError || !org) {
     if (orgError?.code === '23505') {
-      throw new Error('That league URL is already taken — try a different name.');
+      return { error: 'That league URL is already taken — try a different name.' };
     }
-    throw new Error(`Failed to create league: ${orgError?.message}`);
+    return { error: `Failed to create league: ${orgError?.message}` };
   }
 
   const { error: memberError } = await admin.from('organization_members').insert({
@@ -66,7 +73,7 @@ export async function createLeagueOrganization(
 
   if (memberError) {
     await admin.from('organizations').delete().eq('id', org.id);
-    throw new Error(`Failed to set you up as admin: ${memberError.message}`);
+    return { error: `Failed to set you up as admin: ${memberError.message}` };
   }
 
   return { organizationId: org.id, slug: org.slug };

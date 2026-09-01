@@ -75,6 +75,10 @@ export default function ScheduleBuilder({
         homeTeamId: type === 'game' ? homeTeamId || undefined : undefined,
         awayTeamId: type === 'game' ? awayTeamId || undefined : undefined,
       });
+      if ('error' in result) {
+        setError(result.error);
+        return;
+      }
       setEvents((prev) => [
         ...prev,
         {
@@ -105,7 +109,11 @@ export default function ScheduleBuilder({
   async function handleToggleStatus(eventId: string, newStatus: 'draft' | 'published' | 'canceled') {
     setError(null);
     try {
-      await setEventStatus(organizationId, eventId, newStatus);
+      const result = await setEventStatus(organizationId, eventId, newStatus);
+      if ('error' in result) {
+        setError(result.error);
+        return;
+      }
       setEvents((prev) => prev.map((ev) => (ev.id === eventId ? { ...ev, status: newStatus } : ev)));
     } catch (err: any) {
       setError(err.message);
@@ -116,7 +124,11 @@ export default function ScheduleBuilder({
     if (!confirm('Delete this event?')) return;
     setError(null);
     try {
-      await deleteEvent(organizationId, eventId);
+      const result = await deleteEvent(organizationId, eventId);
+      if ('error' in result) {
+        setError(result.error);
+        return;
+      }
       setEvents((prev) => prev.filter((ev) => ev.id !== eventId));
     } catch (err: any) {
       setError(err.message);
@@ -128,6 +140,10 @@ export default function ScheduleBuilder({
     setError(null);
     try {
       const result = await publishAllDraftEvents(organizationId, selectedSeasonId);
+      if ('error' in result) {
+        setError(result.error);
+        return;
+      }
       setEvents((prev) =>
         prev.map((ev) => (ev.season_id === selectedSeasonId && ev.status === 'draft' ? { ...ev, status: 'published' } : ev))
       );
