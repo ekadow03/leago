@@ -1,65 +1,31 @@
 // app/login/page.tsx
-'use client';
-
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { logIn } from '@/lib/actions/auth';
+//
+// Every gated page in the app (Dashboard, Season Builder, Teams, etc.)
+// redirects unauthenticated visitors to /login?next=<the page they wanted>
+// — this page reads that param server-side (so no Suspense boundary is
+// needed around a client-side useSearchParams()) and hands it to the
+// actual form, which sends the browser back there after a successful
+// login instead of always landing in the same place.
 import Nav from '@/components/nav';
+import LoginForm from './login-form';
 
-export default function LoginPage() {
-  const router = useRouter();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setSubmitting(true);
-    setError(null);
-
-    const result = await logIn({ email, password });
-
-    setSubmitting(false);
-
-    if (result.error) {
-      setError(result.error);
-      return;
-    }
-
-    router.push('/register');
-    router.refresh();
-  }
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string }>;
+}) {
+  const { next } = await searchParams;
+  const destination = next || '/admin';
 
   return (
     <div className="auth-page">
       <Nav />
       <div className="auth-body">
         <h1>Log in</h1>
-        <form onSubmit={handleSubmit} className="form-card">
-          <label className="form-label">Email</label>
-          <input
-            type="email"
-            className="form-input"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-          <label className="form-label">Password</label>
-          <input
-            type="password"
-            className="form-input"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-          {error && <p style={{ color: '#B23A2E', fontSize: 14, marginBottom: 12 }}>{error}</p>}
-          <button type="submit" disabled={submitting} className="btn-primary" style={{ width: '100%' }}>
-            {submitting ? 'Logging in…' : 'Log in'}
-          </button>
-        </form>
+        <LoginForm next={destination} />
         <p className="auth-footer">
-          Need an account? <a href="/signup">Sign up</a>
+          Need an account?{' '}
+          <a href={`/signup${next ? `?next=${encodeURIComponent(next)}` : ''}`}>Sign up</a>
         </p>
       </div>
     </div>

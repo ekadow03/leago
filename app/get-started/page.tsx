@@ -22,10 +22,10 @@ export default async function GetStartedPage() {
               you through creating your league.
             </p>
             <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginTop: 20 }}>
-              <a href="/signup" className="btn-primary" style={{ textDecoration: 'none' }}>
+              <a href="/signup?next=/get-started" className="btn-primary" style={{ textDecoration: 'none' }}>
                 Sign up
               </a>
-              <a href="/login" className="btn-small" style={{ textDecoration: 'none', padding: '14px 20px' }}>
+              <a href="/login?next=/get-started" className="btn-small" style={{ textDecoration: 'none', padding: '14px 20px' }}>
                 Log in
               </a>
             </div>

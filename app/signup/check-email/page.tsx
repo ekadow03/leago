@@ -1,7 +1,29 @@
 // app/signup/check-email/page.tsx
+import { createClient } from '@/lib/supabase/server';
+import { redirect } from 'next/navigation';
 import Nav from '@/components/nav';
 
-export default function CheckEmailPage() {
+export default async function CheckEmailPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string }>;
+}) {
+  const { next } = await searchParams;
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  // If this Supabase project doesn't require email confirmation, signUp()
+  // already logged the user in — skip the "check your email" step
+  // entirely and continue straight to where they were headed (back to
+  // league creation, most of the time) instead of making them read an
+  // email that was never sent.
+  if (user) {
+    redirect(next || '/get-started');
+  }
+
   return (
     <div className="auth-page">
       <Nav />
@@ -15,7 +37,10 @@ export default function CheckEmailPage() {
           </p>
           <p style={{ color: 'var(--gray)', fontSize: 13, marginTop: 20 }}>
             If confirmation is disabled for this project, you may already be able to{' '}
-            <a href="/login" style={{ color: 'var(--green-dark)', fontWeight: 700 }}>
+            <a
+              href={`/login${next ? `?next=${encodeURIComponent(next)}` : ''}`}
+              style={{ color: 'var(--green-dark)', fontWeight: 700 }}
+            >
               log in directly
             </a>
             .
