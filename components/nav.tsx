@@ -12,12 +12,18 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { createClient } from '@/lib/supabase/server';
 import { logOut } from '@/lib/actions/auth';
+import { getCurrentUserMemberships } from '@/lib/org-context';
 
 export default async function Nav() {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
+
+  // Only fetched when logged in — an org admin needs a way back to their
+  // admin console from anywhere in the app (previously the only path was
+  // typing /admin directly, which read as "I can't get back to my league").
+  const isOrgAdmin = user ? (await getCurrentUserMemberships()).some((m) => m.roles.includes('admin')) : false;
 
   return (
     <nav className="nav">
@@ -27,8 +33,13 @@ export default async function Nav() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         {user ? (
           <>
+            {isOrgAdmin && (
+              <Link href="/admin" className="btn-small" style={{ textDecoration: 'none' }}>
+                Admin
+              </Link>
+            )}
             <Link href="/dashboard" className="btn-small" style={{ textDecoration: 'none' }}>
-              Dashboard
+              My Registrations
             </Link>
             <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>{user.email}</span>
             <form action={logOut}>
