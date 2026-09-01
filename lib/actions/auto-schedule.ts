@@ -66,94 +66,100 @@ type GenerateScheduleResult = { gamesCreated: number; seasonDatesUsed: number } 
 export async function generateSeasonSchedule(
   input: GenerateScheduleInput
 ): Promise<GenerateScheduleResult> {
-  const isAdmin = await requireOrgAdmin(input.organizationId);
-  if (!isAdmin) {
-    return { error: 'Only an organization admin can generate a schedule.' };
-  }
-
-  if (input.daysOfWeek.length === 0) return { error: 'Select at least one day of the week.' };
-  if (input.times.length === 0) return { error: 'Add at least one time slot.' };
-  if (input.fields.length === 0) return { error: 'Add at least one field.' };
-
-  const admin = createAdminClient();
-
-  const { data: teams } = await admin
-    .from('teams')
-    .select('id')
-    .eq('division_id', input.divisionId);
-
-  const teamIds = (teams ?? []).map((t) => t.id);
-  if (teamIds.length < 2) {
-    return { error: 'Need at least 2 teams in this division to generate a schedule.' };
-  }
-
-  // ---- Step 1: every actual calendar date in range matching selected weekdays ----
-  const gameDates: Date[] = [];
-  const cursor = new Date(input.startDate + 'T00:00:00');
-  const end = new Date(input.endDate + 'T00:00:00');
-  while (cursor <= end) {
-    if (input.daysOfWeek.includes(cursor.getDay())) {
-      gameDates.push(new Date(cursor));
-    }
-    cursor.setDate(cursor.getDate() + 1);
-  }
-
-  if (gameDates.length === 0) {
-    return { error: 'No game dates fall within that range on the selected days of the week.' };
-  }
-
-  // ---- Step 2: how many game slots exist on any single date ----
-  const slotsPerDate = input.times.length * input.fields.length;
-
-  // ---- Step 3: build one round-robin cycle, to be repeated across dates ----
-  const cycle = buildRoundRobinCycle(teamIds);
-  const cycleRounds = cycle.map((round) =>
-    round.filter(([a, b]) => a !== null && b !== null) as [string, string][]
-  );
-
-  // ---- Step 4: walk game dates in order, placing one ROUND per date (not
-  // one slot-fill-everything pass) — this is what keeps a rec season
-  // realistic: each team plays once on a given game day, not multiple
-  // times just because extra fields/times happened to be available. A
-  // round that's too big for one date's slots spills onto the next
-  // date(s) before advancing to the next round. ----
-  const eventsToInsert: any[] = [];
-  let roundIndex = 0;
-  let pendingMatchups: [string, string][] = [...cycleRounds[0]];
-
-  for (const date of gameDates) {
-    if (pendingMatchups.length === 0) {
-      roundIndex = (roundIndex + 1) % cycleRounds.length;
-      pendingMatchups = [...cycleRounds[roundIndex]];
+  try {
+    const isAdmin = await requireOrgAdmin(input.organizationId);
+    if (!isAdmin) {
+      return { error: 'Only an organization admin can generate a schedule.' };
     }
 
-    const forThisDate = pendingMatchups.splice(0, slotsPerDate);
-    let slotCursor = 0;
-    for (const [homeId, awayId] of forThisDate) {
-      const time = input.times[slotCursor % input.times.length];
-      const field = input.fields[Math.floor(slotCursor / input.times.length) % input.fields.length];
-      slotCursor++;
+    if (input.daysOfWeek.length === 0) return { error: 'Select at least one day of the week.' };
+    if (input.times.length === 0) return { error: 'Add at least one time slot.' };
+    if (input.fields.length === 0) return { error: 'Add at least one field.' };
 
-      eventsToInsert.push({
-        organization_id: input.organizationId,
-        season_id: input.seasonId,
-        division_id: input.divisionId,
-        type: 'game',
-        title: 'Game',
-        location: field,
-        start_time: formatDateAtTime(date, time),
-        home_team_id: homeId,
-        away_team_id: awayId,
-        status: 'draft',
-      });
+    const admin = createAdminClient();
+
+    const { data: teams } = await admin
+      .from('teams')
+      .select('id')
+      .eq('division_id', input.divisionId);
+
+    const teamIds = (teams ?? []).map((t) => t.id);
+    if (teamIds.length < 2) {
+      return { error: 'Need at least 2 teams in this division to generate a schedule.' };
     }
+
+    // ---- Step 1: every actual calendar date in range matching selected weekdays ----
+    const gameDates: Date[] = [];
+    const cursor = new Date(input.startDate + 'T00:00:00');
+    const end = new Date(input.endDate + 'T00:00:00');
+    while (cursor <= end) {
+      if (input.daysOfWeek.includes(cursor.getDay())) {
+        gameDates.push(new Date(cursor));
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    if (gameDates.length === 0) {
+      return { error: 'No game dates fall within that range on the selected days of the week.' };
+    }
+
+    // ---- Step 2: how many game slots exist on any single date ----
+    const slotsPerDate = input.times.length * input.fields.length;
+
+    // ---- Step 3: build one round-robin cycle, to be repeated across dates ----
+    const cycle = buildRoundRobinCycle(teamIds);
+    const cycleRounds = cycle.map((round) =>
+      round.filter(([a, b]) => a !== null && b !== null) as [string, string][]
+    );
+
+    // ---- Step 4: walk game dates in order, placing one ROUND per date (not
+    // one slot-fill-everything pass) — this is what keeps a rec season
+    // realistic: each team plays once on a given game day, not multiple
+    // times just because extra fields/times happened to be available. A
+    // round that's too big for one date's slots spills onto the next
+    // date(s) before advancing to the next round. ----
+    const eventsToInsert: any[] = [];
+    let roundIndex = 0;
+    let pendingMatchups: [string, string][] = [...cycleRounds[0]];
+
+    for (const date of gameDates) {
+      if (pendingMatchups.length === 0) {
+        roundIndex = (roundIndex + 1) % cycleRounds.length;
+        pendingMatchups = [...cycleRounds[roundIndex]];
+      }
+
+      const forThisDate = pendingMatchups.splice(0, slotsPerDate);
+      let slotCursor = 0;
+      for (const [homeId, awayId] of forThisDate) {
+        const time = input.times[slotCursor % input.times.length];
+        const field = input.fields[Math.floor(slotCursor / input.times.length) % input.fields.length];
+        slotCursor++;
+
+        eventsToInsert.push({
+          organization_id: input.organizationId,
+          season_id: input.seasonId,
+          division_id: input.divisionId,
+          type: 'game',
+          title: 'Game',
+          location: field,
+          start_time: formatDateAtTime(date, time),
+          home_team_id: homeId,
+          away_team_id: awayId,
+          status: 'draft',
+        });
+      }
+    }
+
+    const { error } = await admin.from('events').insert(eventsToInsert);
+
+    if (error) {
+      return { error: `Failed to create schedule: ${error.message}` };
+    }
+
+    return { gamesCreated: eventsToInsert.length, seasonDatesUsed: gameDates.length };
+  } catch (err) {
+    return {
+      error: err instanceof Error ? `Unexpected server error: ${err.message}` : 'Unexpected server error.',
+    };
   }
-
-  const { error } = await admin.from('events').insert(eventsToInsert);
-
-  if (error) {
-    return { error: `Failed to create schedule: ${error.message}` };
-  }
-
-  return { gamesCreated: eventsToInsert.length, seasonDatesUsed: gameDates.length };
 }
