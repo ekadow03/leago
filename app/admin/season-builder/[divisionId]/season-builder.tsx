@@ -226,7 +226,7 @@ function DaySlotEditor({
           value={time}
           onChange={(e) => setTime(e.target.value)}
           className="form-input"
-          style={{ width: 130 }}
+          style={{ width: 160 }}
         />
         <select
           value={field}
