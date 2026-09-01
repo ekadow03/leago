@@ -60,3 +60,89 @@ export async function createTeam(
     };
   }
 }
+
+type DeleteTeamResult = { ok: true } | { error: string };
+
+/** Removes one team. Any existing events referencing it as home/away just
+ * lose that assignment (events.home_team_id/away_team_id are `on delete
+ * set null`) rather than being deleted themselves — a generated schedule
+ * stays intact but that game's team slot goes blank and needs
+ * reassigning or regenerating. */
+export async function deleteTeam(organizationId: string, teamId: string): Promise<DeleteTeamResult> {
+  try {
+    const isAdmin = await requireOrgAdmin(organizationId);
+    if (!isAdmin) {
+      return { error: 'Only an organization admin can remove a team.' };
+    }
+
+    const admin = createAdminClient();
+
+    // Defense in depth: confirm the team actually belongs to this org
+    // (via its division's season) before deleting, since the admin
+    // client bypasses RLS.
+    const { data: team } = await admin
+      .from('teams')
+      .select('id, divisions ( seasons ( organization_id ) )')
+      .eq('id', teamId)
+      .single();
+
+    const orgId = (team?.divisions as any)?.seasons?.organization_id;
+    if (!team || orgId !== organizationId) {
+      return { error: 'Team not found for this organization.' };
+    }
+
+    const { error } = await admin.from('teams').delete().eq('id', teamId);
+
+    if (error) {
+      return { error: `Failed to remove team: ${error.message}` };
+    }
+
+    return { ok: true };
+  } catch (err) {
+    return {
+      error: err instanceof Error ? `Unexpected server error: ${err.message}` : 'Unexpected server error.',
+    };
+  }
+}
+
+type DeleteAllTeamsResult = { ok: true; count: number } | { error: string };
+
+/** Removes every team in a division at once — same event/draft-pick
+ * cascade behavior as deleteTeam(), just for all of them in one call
+ * (e.g. to start a division's roster over from a corrected CSV). */
+export async function deleteAllTeamsInDivision(
+  organizationId: string,
+  divisionId: string
+): Promise<DeleteAllTeamsResult> {
+  try {
+    const isAdmin = await requireOrgAdmin(organizationId);
+    if (!isAdmin) {
+      return { error: 'Only an organization admin can remove teams.' };
+    }
+
+    const admin = createAdminClient();
+
+    const { data: division } = await admin
+      .from('divisions')
+      .select('id, seasons ( organization_id )')
+      .eq('id', divisionId)
+      .single();
+
+    const orgId = (division?.seasons as any)?.organization_id;
+    if (!division || orgId !== organizationId) {
+      return { error: 'Division not found for this organization.' };
+    }
+
+    const { data, error } = await admin.from('teams').delete().eq('division_id', divisionId).select('id');
+
+    if (error) {
+      return { error: `Failed to remove teams: ${error.message}` };
+    }
+
+    return { ok: true, count: data?.length ?? 0 };
+  } catch (err) {
+    return {
+      error: err instanceof Error ? `Unexpected server error: ${err.message}` : 'Unexpected server error.',
+    };
+  }
+}

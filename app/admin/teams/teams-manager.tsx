@@ -3,7 +3,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { createTeam } from '@/lib/actions/teams';
+import { createTeam, deleteTeam, deleteAllTeamsInDivision } from '@/lib/actions/teams';
 import { bulkCreateTeams } from '@/lib/actions/team-import';
 
 interface Season {
@@ -95,6 +95,14 @@ export default function TeamsManager({
     setTeams((prev) => [...prev, ...newTeams]);
   }
 
+  function handleTeamRemoved(teamId: string) {
+    setTeams((prev) => prev.filter((t) => t.id !== teamId));
+  }
+
+  function handleDivisionTeamsCleared(divisionId: string) {
+    setTeams((prev) => prev.filter((t) => t.division_id !== divisionId));
+  }
+
   if (seasons.length === 0) {
     return <p style={{ color: 'var(--gray)' }}>No seasons exist yet — create one from the Dashboard first.</p>;
   }
@@ -140,6 +148,8 @@ export default function TeamsManager({
               division={d}
               teams={teams.filter((t) => t.division_id === d.id)}
               onTeamAdded={handleTeamAdded}
+              onTeamRemoved={handleTeamRemoved}
+              onDivisionTeamsCleared={handleDivisionTeamsCleared}
             />
           ))}
         </>
@@ -239,6 +249,7 @@ function BulkImportPanel({
       const createdTeams: Team[] = [];
       const failures: string[] = [];
       let totalCreated = 0;
+      let totalSkipped = 0;
 
       for (const [divisionId, names] of namesByDivisionId) {
         const result = await bulkCreateTeams(organizationId, divisionId, names);
@@ -247,16 +258,17 @@ function BulkImportPanel({
           failures.push(`${divisionName}: ${result.error}`);
           continue;
         }
-        totalCreated += result.count;
-        // Placeholder ids — the real ones show up after a page refresh,
-        // same tradeoff the old per-division importer made for a
-        // responsive UI without a second round-trip just to re-fetch ids.
-        names.forEach((name) => createdTeams.push({ id: `pending-${divisionId}-${name}`, name, division_id: divisionId }));
+        totalCreated += result.teams.length;
+        totalSkipped += result.skipped.length;
+        result.teams.forEach((t) => createdTeams.push({ id: t.id, name: t.name, division_id: divisionId }));
       }
 
       onImported(createdTeams);
 
       const parts = [`Imported ${totalCreated} team(s).`];
+      if (totalSkipped > 0) {
+        parts.push(`Skipped ${totalSkipped} duplicate name(s) already in their division.`);
+      }
       if (unmatched.size > 0) parts.push(`Skipped unrecognized column(s): ${Array.from(unmatched).join(', ')}.`);
       if (failures.length > 0) parts.push(`Errors: ${failures.join('; ')}`);
       setSummary(parts.join(' '));
@@ -301,14 +313,20 @@ function DivisionTeamsCard({
   division,
   teams,
   onTeamAdded,
+  onTeamRemoved,
+  onDivisionTeamsCleared,
 }: {
   organizationId: string;
   division: Division;
   teams: Team[];
   onTeamAdded: (team: Team) => void;
+  onTeamRemoved: (teamId: string) => void;
+  onDivisionTeamsCleared: (divisionId: string) => void;
 }) {
   const [newTeamName, setNewTeamName] = useState('');
   const [adding, setAdding] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleAdd(e: React.FormEvent) {
@@ -330,17 +348,75 @@ function DivisionTeamsCard({
     }
   }
 
+  async function handleRemoveTeam(team: Team) {
+    if (
+      !confirm(
+        `Remove ${team.name}? If it's already in a generated schedule, those games will keep their date/time/field but lose this team — you'll need to reassign or regenerate.`
+      )
+    ) {
+      return;
+    }
+    setRemovingId(team.id);
+    setError(null);
+    try {
+      const result = await deleteTeam(organizationId, team.id);
+      if ('error' in result) {
+        setError(result.error);
+        return;
+      }
+      onTeamRemoved(team.id);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setRemovingId(null);
+    }
+  }
+
+  async function handleClearAll() {
+    if (
+      !confirm(
+        `Remove all ${teams.length} team(s) from ${division.name}? This can't be undone, and any generated games involving them will lose those team assignments.`
+      )
+    ) {
+      return;
+    }
+    setClearing(true);
+    setError(null);
+    try {
+      const result = await deleteAllTeamsInDivision(organizationId, division.id);
+      if ('error' in result) {
+        setError(result.error);
+        return;
+      }
+      onDivisionTeamsCleared(division.id);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setClearing(false);
+    }
+  }
+
   return (
     <div className="form-card" style={{ marginBottom: 20 }}>
-      <h2 style={{ margin: 0 }}>
-        {division.name} ({teams.length})
-      </h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+        <h2 style={{ margin: 0 }}>
+          {division.name} ({teams.length})
+        </h2>
+        {teams.length > 0 && (
+          <button type="button" onClick={handleClearAll} disabled={clearing} className="btn-small">
+            {clearing ? 'Removing…' : 'Remove all teams'}
+          </button>
+        )}
+      </div>
 
       {teams.length > 0 && (
         <div className="chip-list" style={{ marginTop: 12 }}>
           {teams.map((t) => (
             <span key={t.id} className="chip">
               {t.name}
+              <button type="button" onClick={() => handleRemoveTeam(t)} disabled={removingId === t.id}>
+                ×
+              </button>
             </span>
           ))}
         </div>
