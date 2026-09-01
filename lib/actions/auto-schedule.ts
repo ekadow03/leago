@@ -180,6 +180,7 @@ type GenerateScheduleResult =
       weeksScheduled: number;
       conflictsAvoided: number;
       blackoutsSkipped: number;
+      fieldsReserved: number;
       targetReached: boolean;
     }
   | { error: string };
@@ -271,6 +272,69 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
 
     const blackouts: BlackoutRow[] = blackoutRows ?? [];
 
+    // ---- Step 2c: field priority reservations (migration 0018). A field
+    // that another division outranks this one on, and hasn't been
+    // scheduled on yet anywhere in the org, is treated as reserved and
+    // skipped entirely for this generation run — this is what turns the
+    // old "whichever division generates first wins" behavior into
+    // something that actually respects the ranking the admin set up,
+    // instead of just being advisory. Fields with no priority rows at all
+    // are unaffected — nothing changes for orgs that haven't set this up. ----
+    const fieldNamesUsed = Array.from(new Set(input.daySlots.map((s) => s.field)));
+    const reservedFieldNames = new Set<string>();
+    if (fieldNamesUsed.length > 0) {
+      const { data: orgFields } = await admin
+        .from('fields')
+        .select('id, name')
+        .eq('organization_id', input.organizationId);
+
+      const fieldIdByLowerName = new Map((orgFields ?? []).map((f) => [f.name.toLowerCase(), f.id]));
+      const relevantFieldIds = fieldNamesUsed
+        .map((name) => fieldIdByLowerName.get(name.toLowerCase()))
+        .filter((id): id is string => !!id);
+
+      if (relevantFieldIds.length > 0) {
+        const { data: priorityRows } = await admin
+          .from('field_priorities')
+          .select('field_id, division_id, priority')
+          .in('field_id', relevantFieldIds);
+
+        // Org-wide, all-time (not just this date range): has each
+        // division ever gotten a game on a given field at all?
+        const { data: allFieldEvents } = await admin
+          .from('events')
+          .select('location, division_id')
+          .eq('organization_id', input.organizationId)
+          .neq('status', 'canceled')
+          .not('location', 'is', null)
+          .not('division_id', 'is', null);
+
+        const scheduledPairs = new Set(
+          (allFieldEvents ?? []).map((e) => `${(e.location as string).toLowerCase()}|${e.division_id}`)
+        );
+
+        const idToLowerName = new Map((orgFields ?? []).map((f) => [f.id, f.name.toLowerCase()]));
+
+        for (const fieldId of relevantFieldIds) {
+          const rowsForField = (priorityRows ?? []).filter((r) => r.field_id === fieldId);
+          if (rowsForField.length === 0) continue;
+
+          const myRow = rowsForField.find((r) => r.division_id === input.divisionId);
+          const myPriority = myRow ? myRow.priority : Infinity;
+
+          const outranksMe = rowsForField.filter(
+            (r) => r.division_id !== input.divisionId && r.priority < myPriority
+          );
+
+          const fieldName = idToLowerName.get(fieldId)!;
+          const stillUnclaimed = outranksMe.some((r) => !scheduledPairs.has(`${fieldName}|${r.division_id}`));
+          if (stillUnclaimed) {
+            reservedFieldNames.add(fieldName);
+          }
+        }
+      }
+    }
+
     // ---- Step 3: build one round-robin cycle, to be repeated across dates ----
     const cycle = buildRoundRobinCycle(teamIds);
     const cycleRounds = cycle.map((round) =>
@@ -314,6 +378,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     let pendingMatchups: [string, string][] = [...cycleRounds[0]];
     let conflictsAvoided = 0;
     let blackoutsSkipped = 0;
+    let fieldsReserved = 0;
     let weekNumber = 1; // round 0 is already "week" 1
 
     const gamesPlayed = new Map<string, number>(teamIds.map((id) => [id, 0]));
@@ -323,6 +388,10 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     for (const date of gameDates) {
       const configuredSlots = slotsByDay.get(date.getDay())!;
       const availableSlots = configuredSlots.filter((slot) => {
+        if (reservedFieldNames.has(slot.field.toLowerCase())) {
+          fieldsReserved++;
+          return false;
+        }
         if (isBlackedOut(date, slot.time, slot.field, blackouts, timeZone)) {
           blackoutsSkipped++;
           return false;
@@ -375,6 +444,12 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     }
 
     if (eventsToInsert.length === 0) {
+      if (fieldsReserved > 0 && reservedFieldNames.size === fieldNamesUsed.length) {
+        return {
+          error:
+            'Every field this division is set up to use is currently reserved for a higher-priority division that hasn\'t been scheduled yet. Generate that division\'s schedule first, or adjust field priority.',
+        };
+      }
       return { error: 'Every configured slot in that date range is already taken by another event.' };
     }
 
@@ -389,6 +464,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
       weeksScheduled: weekNumber,
       conflictsAvoided,
       blackoutsSkipped,
+      fieldsReserved,
       targetReached: targetReachedFor(),
     };
   } catch (err) {

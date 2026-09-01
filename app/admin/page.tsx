@@ -75,6 +75,13 @@ export default async function AdminDashboardPage() {
     .eq('organization_id', org.organizationId)
     .order('name', { ascending: true });
 
+  const { data: fieldPriorities } = divisionIds.length
+    ? await supabase
+        .from('field_priorities')
+        .select('id, field_id, division_id, priority')
+        .eq('organization_id', org.organizationId)
+    : { data: [] as any[] };
+
   return (
     <div className="admin-page">
       <Nav />
@@ -90,6 +97,7 @@ export default async function AdminDashboardPage() {
           initialDivisions={(divisions as any) ?? []}
           teamCounts={teamCounts}
           initialFields={fields ?? []}
+          initialFieldPriorities={(fieldPriorities as any) ?? []}
         />
       </div>
     </div>

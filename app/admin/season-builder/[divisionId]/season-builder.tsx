@@ -52,6 +52,7 @@ export default function SeasonBuilder({
   existingGameCount,
   orgFields,
   initialBlackouts,
+  initialFieldNames,
 }: {
   organizationId: string;
   seasonId: string;
@@ -61,6 +62,7 @@ export default function SeasonBuilder({
   existingGameCount: number;
   orgFields: OrgField[];
   initialBlackouts: Blackout[];
+  initialFieldNames: string[];
 }) {
   return (
     <div>
@@ -74,6 +76,7 @@ export default function SeasonBuilder({
         existingGameCount={existingGameCount}
         orgFields={orgFields}
         initialBlackouts={initialBlackouts}
+        initialFieldNames={initialFieldNames}
       />
     </div>
   );
@@ -232,6 +235,7 @@ function ScheduleGenerator({
   existingGameCount,
   orgFields,
   initialBlackouts,
+  initialFieldNames,
 }: {
   organizationId: string;
   seasonId: string;
@@ -241,6 +245,7 @@ function ScheduleGenerator({
   existingGameCount: number;
   orgFields: OrgField[];
   initialBlackouts: Blackout[];
+  initialFieldNames: string[];
 }) {
   const [blackouts, setBlackouts] = useState(initialBlackouts);
 
@@ -251,7 +256,12 @@ function ScheduleGenerator({
   // reliable: it matches on the literal location string, so "Field 1"
   // typed twice with different casing would otherwise silently defeat it.
   const [availableOrgFields, setAvailableOrgFields] = useState<OrgField[]>(orgFields);
-  const [fields, setFields] = useState<string[]>([]);
+  // Pre-filled from this division's field priority ranking (migration
+  // 0018), in priority order, so the fields it's set up to have first
+  // claim on are already selected instead of needing to be re-picked
+  // every time a schedule is generated. Still just a starting point —
+  // add/remove freely below.
+  const [fields, setFields] = useState<string[]>(initialFieldNames);
   const [fieldToAdd, setFieldToAdd] = useState('');
   const [newFieldName, setNewFieldName] = useState('');
   const [addingField, setAddingField] = useState(false);
@@ -268,6 +278,7 @@ function ScheduleGenerator({
     weeksScheduled: number;
     conflictsAvoided: number;
     blackoutsSkipped: number;
+    fieldsReserved: number;
     targetReached: boolean;
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -575,6 +586,8 @@ function ScheduleGenerator({
               ` Skipped ${result.conflictsAvoided} slot(s) already booked by another event.`}
             {result.blackoutsSkipped > 0 &&
               ` Skipped ${result.blackoutsSkipped} slot(s) blocked by a blackout.`}
+            {result.fieldsReserved > 0 &&
+              ` Skipped ${result.fieldsReserved} slot(s) reserved for a higher-priority division that hasn't been scheduled there yet.`}
           </p>
           {!result.targetReached && (
             <p style={{ color: '#B23A2E', fontSize: 13, marginTop: -4 }}>

@@ -84,6 +84,21 @@ export default async function SeasonBuilderPage({
     .select('id, season_id, field_name, kind, blackout_date, day_of_week, start_time, end_time, label')
     .eq('season_id', division.season_id);
 
+  // This division's field priority ranking (migration 0018), lowest
+  // number (highest priority) first — used only to pre-fill the field
+  // list below so it doesn't need re-picking every generation; the
+  // actual reservation enforcement happens server-side inside
+  // generateSeasonSchedule() itself.
+  const { data: fieldPriorities } = await supabase
+    .from('field_priorities')
+    .select('priority, fields ( name )')
+    .eq('division_id', divisionId)
+    .order('priority', { ascending: true });
+
+  const initialFieldNames = ((fieldPriorities ?? []) as unknown as { priority: number; fields: { name: string } | null }[])
+    .map((row) => row.fields?.name)
+    .filter((name): name is string => !!name);
+
   return (
     <div className="admin-page">
       <Nav />
@@ -104,6 +119,7 @@ export default async function SeasonBuilderPage({
           existingGameCount={(existingGames as any)?.count ?? 0}
           orgFields={orgFields ?? []}
           initialBlackouts={(blackouts as any) ?? []}
+          initialFieldNames={initialFieldNames}
         />
       </div>
     </div>
