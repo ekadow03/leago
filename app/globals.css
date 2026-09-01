@@ -500,6 +500,8 @@ select:focus-visible {
   border-radius: 999px;
   padding: 6px 14px;
   cursor: pointer;
+  display: inline-block;
+  text-decoration: none;
 }
 
 .btn-small:hover {
@@ -652,4 +654,34 @@ select:focus-visible {
 
 .shift-row:first-of-type {
   border-top: none;
+}
+
+/* ---------------------------------------------------------------- */
+/* Admin sub-navigation (tabs across admin pages)                    */
+/* ---------------------------------------------------------------- */
+.admin-subnav {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 20px 24px 0;
+}
+
+.admin-subnav-link {
+  font-weight: 600;
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1.5px solid var(--gray-light);
+  background: var(--white);
+  color: var(--gray);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.admin-subnav-link.active {
+  border-color: var(--navy);
+  background: var(--navy);
+  color: var(--white);
 }

@@ -4,6 +4,7 @@ import { getCurrentUserMemberships } from '@/lib/org-context';
 import { redirect } from 'next/navigation';
 import RegistrationsTable from './registrations-table';
 import Nav from '@/components/nav';
+import AdminNav from '@/components/admin-nav';
 
 export default async function AdminRegistrationsPage() {
   const supabase = await createClient();
@@ -48,6 +49,7 @@ export default async function AdminRegistrationsPage() {
   return (
     <div className="admin-page">
       <Nav />
+      <AdminNav active="/admin/registrations" />
       <div className="admin-header">
         <h1>Registrations</h1>
         <p>{org.organizationName}</p>

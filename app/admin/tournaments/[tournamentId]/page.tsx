@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getCurrentUserMemberships } from '@/lib/org-context';
 import { redirect } from 'next/navigation';
 import TournamentAdmin from './tournament-admin';
+import Link from 'next/link';
 import Nav from '@/components/nav';
 
 export default async function TournamentAdminPage({
@@ -71,6 +72,9 @@ export default async function TournamentAdminPage({
     <div className="admin-page">
       <Nav />
       <div className="admin-header">
+        <Link href="/admin" style={{ fontSize: 13, color: 'var(--gray)' }}>
+          ← Back to admin
+        </Link>
         <h1>{tournament.name}</h1>
         <p>${(tournament.entry_fee_cents / 100).toFixed(2)} entry</p>
       </div>

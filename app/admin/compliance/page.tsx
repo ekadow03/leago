@@ -4,6 +4,7 @@ import { getCurrentUserMemberships } from '@/lib/org-context';
 import { redirect } from 'next/navigation';
 import ComplianceReview from './compliance-review';
 import Nav from '@/components/nav';
+import AdminNav from '@/components/admin-nav';
 
 export default async function AdminCompliancePage() {
   const supabase = await createClient();
@@ -47,6 +48,7 @@ export default async function AdminCompliancePage() {
   return (
     <div className="admin-page">
       <Nav />
+      <AdminNav active="/admin/compliance" />
       <div className="admin-header">
         <h1>Compliance</h1>
         <p>{org.organizationName}</p>

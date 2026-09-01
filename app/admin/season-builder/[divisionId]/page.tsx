@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { getCurrentUserMemberships } from '@/lib/org-context';
 import { redirect } from 'next/navigation';
 import SeasonBuilder from './season-builder';
+import Link from 'next/link';
 import Nav from '@/components/nav';
 
 export default async function SeasonBuilderPage({
@@ -73,6 +74,9 @@ export default async function SeasonBuilderPage({
     <div className="admin-page">
       <Nav />
       <div className="admin-header">
+        <Link href="/admin" style={{ fontSize: 13, color: 'var(--gray)' }}>
+          ← Back to admin
+        </Link>
         <h1>{division.name}</h1>
         <p>{season.name} · Season builder</p>
       </div>

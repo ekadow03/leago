@@ -4,6 +4,7 @@ import { getCurrentUserMemberships } from '@/lib/org-context';
 import { redirect } from 'next/navigation';
 import TournamentsList from './tournaments-list';
 import Nav from '@/components/nav';
+import AdminNav from '@/components/admin-nav';
 
 export default async function AdminTournamentsPage() {
   const supabase = await createClient();
@@ -41,6 +42,7 @@ export default async function AdminTournamentsPage() {
   return (
     <div className="admin-page">
       <Nav />
+      <AdminNav active="/admin/tournaments" />
       <div className="admin-header">
         <h1>Tournaments</h1>
         <p>{org.organizationName}</p>

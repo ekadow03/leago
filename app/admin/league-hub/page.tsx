@@ -4,6 +4,7 @@ import { getCurrentUserMemberships } from '@/lib/org-context';
 import { redirect } from 'next/navigation';
 import LeagueHubAdmin from './league-hub-admin';
 import Nav from '@/components/nav';
+import AdminNav from '@/components/admin-nav';
 
 export default async function AdminLeagueHubPage() {
   const supabase = await createClient();
@@ -47,6 +48,7 @@ export default async function AdminLeagueHubPage() {
   return (
     <div className="admin-page">
       <Nav />
+      <AdminNav active="/admin/league-hub" />
       <div className="admin-header">
         <h1>League Hub</h1>
         <p>{org.organizationName}</p>

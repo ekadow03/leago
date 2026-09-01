@@ -4,6 +4,7 @@ import { getCurrentUserMemberships } from '@/lib/org-context';
 import { redirect } from 'next/navigation';
 import ScheduleBuilder from './schedule-builder';
 import Nav from '@/components/nav';
+import AdminNav from '@/components/admin-nav';
 
 export default async function AdminSchedulePage() {
   const supabase = await createClient();
@@ -57,6 +58,7 @@ export default async function AdminSchedulePage() {
   return (
     <div className="admin-page">
       <Nav />
+      <AdminNav active="/admin/schedule" />
       <div className="admin-header">
         <h1>Schedule</h1>
         <p>{org.organizationName}</p>

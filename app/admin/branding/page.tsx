@@ -4,6 +4,7 @@ import { getCurrentUserMemberships } from '@/lib/org-context';
 import { redirect } from 'next/navigation';
 import BrandingForm from './branding-form';
 import Nav from '@/components/nav';
+import AdminNav from '@/components/admin-nav';
 
 export default async function AdminBrandingPage() {
   const supabase = await createClient();
@@ -41,6 +42,7 @@ export default async function AdminBrandingPage() {
   return (
     <div className="admin-page">
       <Nav />
+      <AdminNav active="/admin/branding" />
       <div className="admin-header">
         <h1>Branding</h1>
         <p>{org.organizationName} — customize how your public tournament pages look</p>

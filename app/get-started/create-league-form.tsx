@@ -21,7 +21,7 @@ export default function CreateLeagueForm() {
     setError(null);
     try {
       await createLeagueOrganization({ name, slug: name });
-      router.push('/admin/league-hub');
+      router.push('/admin');
       router.refresh();
     } catch (err: any) {
       setError(err.message);
