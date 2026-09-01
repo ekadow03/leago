@@ -8,17 +8,33 @@
 // once) and then REPEATS that cycle across every available game date
 // until the season's date range is filled — spreading games evenly
 // rather than compressing everyone's matchups into the first week or two.
+//
+// Each day of the week carries its own list of (time, field) slots,
+// rather than one flat set of times/fields applied to every selected
+// day — a weekday might only offer a single 5pm slot, while Saturday
+// could offer many across several fields, because fields are often
+// shared with other divisions and only free at specific times.
+//
+// Before placing a game into any (date, time, field) slot, this also
+// checks the organization's EXISTING events — any season, any division —
+// for that same field and exact time, and skips slots that are already
+// taken. That's what keeps two divisions sharing the same physical field
+// from getting double-booked into the same game.
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOrgAdmin } from '@/lib/org-context';
+
+interface DaySlotInput {
+  dayOfWeek: number; // 0 = Sunday .. 6 = Saturday
+  time: string; // "18:00", "19:30", etc — 24hr format
+  field: string; // location name, e.g. "Field 1"
+}
 
 interface GenerateScheduleInput {
   organizationId: string;
   seasonId: string;
   divisionId: string;
-  daysOfWeek: number[]; // 0 = Sunday .. 6 = Saturday
-  times: string[]; // "18:00", "19:30", etc — 24hr format, sorted chronologically by caller
-  fields: string[]; // location names, e.g. ["Field 1", "Field 2"]
+  daySlots: DaySlotInput[];
   startDate: string; // "2026-09-01"
   endDate: string; // "2026-11-15"
 }
@@ -61,20 +77,23 @@ function formatDateAtTime(date: Date, time: string): string {
   return d.toISOString();
 }
 
-type GenerateScheduleResult = { gamesCreated: number; seasonDatesUsed: number } | { error: string };
+type GenerateScheduleResult =
+  | { gamesCreated: number; seasonDatesUsed: number; conflictsAvoided: number }
+  | { error: string };
 
-export async function generateSeasonSchedule(
-  input: GenerateScheduleInput
-): Promise<GenerateScheduleResult> {
+export async function generateSeasonSchedule(input: GenerateScheduleInput): Promise<GenerateScheduleResult> {
   try {
     const isAdmin = await requireOrgAdmin(input.organizationId);
     if (!isAdmin) {
       return { error: 'Only an organization admin can generate a schedule.' };
     }
 
-    if (input.daysOfWeek.length === 0) return { error: 'Select at least one day of the week.' };
-    if (input.times.length === 0) return { error: 'Add at least one time slot.' };
-    if (input.fields.length === 0) return { error: 'Add at least one field.' };
+    if (input.daySlots.length === 0) {
+      return { error: 'Add at least one time/field slot to a game day.' };
+    }
+    if (!input.startDate || !input.endDate) {
+      return { error: 'Set both a season start and end date.' };
+    }
 
     const admin = createAdminClient();
 
@@ -88,23 +107,47 @@ export async function generateSeasonSchedule(
       return { error: 'Need at least 2 teams in this division to generate a schedule.' };
     }
 
-    // ---- Step 1: every actual calendar date in range matching selected weekdays ----
+    // ---- group configured slots by day of week, sorted by time for
+    // deterministic ordering within a date ----
+    const slotsByDay = new Map<number, DaySlotInput[]>();
+    for (const slot of input.daySlots) {
+      const list = slotsByDay.get(slot.dayOfWeek) ?? [];
+      list.push(slot);
+      slotsByDay.set(slot.dayOfWeek, list);
+    }
+    for (const list of slotsByDay.values()) {
+      list.sort((a, b) => a.time.localeCompare(b.time));
+    }
+
+    // ---- Step 1: every actual calendar date in range that has at least
+    // one configured slot for its day of week ----
     const gameDates: Date[] = [];
     const cursor = new Date(input.startDate + 'T00:00:00');
     const end = new Date(input.endDate + 'T00:00:00');
     while (cursor <= end) {
-      if (input.daysOfWeek.includes(cursor.getDay())) {
+      if (slotsByDay.has(cursor.getDay())) {
         gameDates.push(new Date(cursor));
       }
       cursor.setDate(cursor.getDate() + 1);
     }
 
     if (gameDates.length === 0) {
-      return { error: 'No game dates fall within that range on the selected days of the week.' };
+      return { error: 'No game dates fall within that range on the configured days.' };
     }
 
-    // ---- Step 2: how many game slots exist on any single date ----
-    const slotsPerDate = input.times.length * input.fields.length;
+    // ---- Step 2: existing events across the WHOLE organization (any
+    // season, any division) in this date range, so a field shared with
+    // another division doesn't get double-booked ----
+    const { data: existingEvents } = await admin
+      .from('events')
+      .select('location, start_time')
+      .eq('organization_id', input.organizationId)
+      .neq('status', 'canceled')
+      .not('location', 'is', null)
+      .gte('start_time', new Date(input.startDate + 'T00:00:00').toISOString())
+      .lte('start_time', new Date(input.endDate + 'T23:59:59').toISOString());
+
+    const occupied = new Set((existingEvents ?? []).map((e) => `${e.location}|${e.start_time}`));
 
     // ---- Step 3: build one round-robin cycle, to be repeated across dates ----
     const cycle = buildRoundRobinCycle(teamIds);
@@ -112,28 +155,50 @@ export async function generateSeasonSchedule(
       round.filter(([a, b]) => a !== null && b !== null) as [string, string][]
     );
 
-    // ---- Step 4: walk game dates in order, placing one ROUND per date (not
-    // one slot-fill-everything pass) — this is what keeps a rec season
-    // realistic: each team plays once on a given game day, not multiple
-    // times just because extra fields/times happened to be available. A
-    // round that's too big for one date's slots spills onto the next
-    // date(s) before advancing to the next round. ----
-    const eventsToInsert: any[] = [];
+    // ---- Step 4: walk game dates in order, placing one ROUND per date
+    // (not one slot-fill-everything pass) — this is what keeps a rec
+    // season realistic: each team plays once on a given game day, not
+    // multiple times just because extra slots happened to be available.
+    // A round that's too big for one date's available slots spills onto
+    // the next date(s) before advancing to the next round. Slots already
+    // taken by another event (any division) are skipped entirely. ----
+    const eventsToInsert: Array<{
+      organization_id: string;
+      season_id: string;
+      division_id: string;
+      type: 'game';
+      title: string;
+      location: string;
+      start_time: string;
+      home_team_id: string;
+      away_team_id: string;
+      status: 'draft';
+    }> = [];
     let roundIndex = 0;
     let pendingMatchups: [string, string][] = [...cycleRounds[0]];
+    let conflictsAvoided = 0;
 
     for (const date of gameDates) {
+      const configuredSlots = slotsByDay.get(date.getDay())!;
+
+      const availableSlots = configuredSlots.filter((slot) => {
+        const isoTime = formatDateAtTime(date, slot.time);
+        const taken = occupied.has(`${slot.field}|${isoTime}`);
+        if (taken) conflictsAvoided++;
+        return !taken;
+      });
+
+      if (availableSlots.length === 0) continue;
+
       if (pendingMatchups.length === 0) {
         roundIndex = (roundIndex + 1) % cycleRounds.length;
         pendingMatchups = [...cycleRounds[roundIndex]];
       }
 
-      const forThisDate = pendingMatchups.splice(0, slotsPerDate);
-      let slotCursor = 0;
-      for (const [homeId, awayId] of forThisDate) {
-        const time = input.times[slotCursor % input.times.length];
-        const field = input.fields[Math.floor(slotCursor / input.times.length) % input.fields.length];
-        slotCursor++;
+      const forThisDate = pendingMatchups.splice(0, availableSlots.length);
+      forThisDate.forEach(([homeId, awayId], i) => {
+        const slot = availableSlots[i];
+        const isoTime = formatDateAtTime(date, slot.time);
 
         eventsToInsert.push({
           organization_id: input.organizationId,
@@ -141,13 +206,22 @@ export async function generateSeasonSchedule(
           division_id: input.divisionId,
           type: 'game',
           title: 'Game',
-          location: field,
-          start_time: formatDateAtTime(date, time),
+          location: slot.field,
+          start_time: isoTime,
           home_team_id: homeId,
           away_team_id: awayId,
           status: 'draft',
         });
-      }
+
+        // Reserve this slot for the rest of this generation run too, in
+        // case it's reachable more than once (shouldn't normally happen,
+        // but cheap to guard against).
+        occupied.add(`${slot.field}|${isoTime}`);
+      });
+    }
+
+    if (eventsToInsert.length === 0) {
+      return { error: 'Every configured slot in that date range is already taken by another event.' };
     }
 
     const { error } = await admin.from('events').insert(eventsToInsert);
@@ -156,7 +230,11 @@ export async function generateSeasonSchedule(
       return { error: `Failed to create schedule: ${error.message}` };
     }
 
-    return { gamesCreated: eventsToInsert.length, seasonDatesUsed: gameDates.length };
+    return {
+      gamesCreated: eventsToInsert.length,
+      seasonDatesUsed: gameDates.length,
+      conflictsAvoided,
+    };
   } catch (err) {
     return {
       error: err instanceof Error ? `Unexpected server error: ${err.message}` : 'Unexpected server error.',
