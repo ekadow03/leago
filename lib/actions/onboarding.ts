@@ -14,6 +14,7 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { revalidatePath } from 'next/cache';
 
 interface CreateLeagueInput {
   name: string;
@@ -79,6 +80,12 @@ export async function createLeagueOrganization(input: CreateLeagueInput): Promis
       await admin.from('organizations').delete().eq('id', org.id);
       return { error: `Failed to set you up as admin: ${memberError.message}` };
     }
+
+    // Every /admin/* page resolves "the" org to work in from
+    // getCurrentUserMemberships(), and the Router Cache can otherwise
+    // keep serving a stale /admin render from before this org existed —
+    // revalidate server-side so the very next navigation there sees it.
+    revalidatePath('/admin');
 
     return { organizationId: org.id, slug: org.slug };
   } catch (err) {

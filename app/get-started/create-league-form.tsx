@@ -25,8 +25,14 @@ export default function CreateLeagueForm() {
         setError(result.error);
         return;
       }
+      // createLeagueOrganization() already calls revalidatePath('/admin')
+      // server-side, which invalidates the client Router Cache entry for
+      // that route too — so a plain push here is enough to land on a
+      // fresh /admin render. Calling router.refresh() right after push
+      // used to race the in-flight navigation (refresh could apply to
+      // whichever route was still "current" at that instant), which is
+      // what made the button occasionally need a second click.
       router.push('/admin');
-      router.refresh();
     } catch (err: any) {
       setError(err.message ?? 'Something went wrong. Please try again.');
     } finally {

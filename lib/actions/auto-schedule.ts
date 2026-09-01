@@ -42,6 +42,7 @@ interface GenerateScheduleInput {
   divisionId: string;
   daySlots: DaySlotInput[];
   gamesPerTeam: number;
+  gameDurationMinutes: number; // used to stamp events.end_time on every created game
   startDate: string; // "2026-09-01"
   endDate: string; // "2026-11-15" — a hard cap, not a target
   // IANA zone (e.g. "America/Los_Angeles"), read from the admin's own
@@ -199,6 +200,9 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     if (!Number.isFinite(input.gamesPerTeam) || input.gamesPerTeam < 1) {
       return { error: 'Set how many games each team should play (at least 1).' };
     }
+    if (!Number.isFinite(input.gameDurationMinutes) || input.gameDurationMinutes < 1) {
+      return { error: 'Set a game duration of at least 1 minute.' };
+    }
 
     const timeZone = input.timeZone || 'UTC';
 
@@ -300,6 +304,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
       title: string;
       location: string;
       start_time: string;
+      end_time: string;
       home_team_id: string;
       away_team_id: string;
       status: 'draft';
@@ -340,6 +345,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
       forThisDate.forEach(([homeId, awayId], i) => {
         const slot = availableSlots[i];
         const isoTime = zonedDateTimeToIso(date, slot.time, timeZone);
+        const endIso = new Date(new Date(isoTime).getTime() + input.gameDurationMinutes * 60000).toISOString();
 
         eventsToInsert.push({
           organization_id: input.organizationId,
@@ -349,6 +355,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
           title: 'Game',
           location: slot.field,
           start_time: isoTime,
+          end_time: endIso,
           home_team_id: homeId,
           away_team_id: awayId,
           status: 'draft',

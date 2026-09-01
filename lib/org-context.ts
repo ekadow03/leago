@@ -35,7 +35,13 @@ export async function getCurrentUserMemberships(): Promise<OrgMembership[]> {
     `
     )
     .eq('people.auth_user_id', user.id)
-    .eq('status', 'active');
+    .eq('status', 'active')
+    // Most-recently-created membership first. Several pages resolve
+    // "the" org an admin is working in via memberships[0] with no
+    // switcher UI — without this, Postgres returns rows in whatever
+    // order it finds them (not necessarily creation order), so a newly
+    // created league could effectively vanish behind an older one.
+    .order('created_at', { ascending: false });
 
   if (error || !data) return [];
 

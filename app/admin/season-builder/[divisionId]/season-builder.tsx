@@ -259,6 +259,7 @@ function ScheduleGenerator({
   const [activeDays, setActiveDays] = useState<number[]>([]);
   const [daySlots, setDaySlots] = useState<Record<number, TimeGroup[]>>({});
   const [gamesPerTeam, setGamesPerTeam] = useState('');
+  const [gameDuration, setGameDuration] = useState('60');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -372,13 +373,16 @@ function ScheduleGenerator({
     0
   );
   const gamesPerTeamNum = Number(gamesPerTeam);
+  const gameDurationNum = Number(gameDuration);
   const canGenerate =
     teamCount >= 2 &&
     totalSlots > 0 &&
     !!startDate &&
     !!endDate &&
     Number.isFinite(gamesPerTeamNum) &&
-    gamesPerTeamNum >= 1;
+    gamesPerTeamNum >= 1 &&
+    Number.isFinite(gameDurationNum) &&
+    gameDurationNum >= 1;
 
   async function handleGenerate() {
     setSubmitting(true);
@@ -394,6 +398,7 @@ function ScheduleGenerator({
         divisionId,
         daySlots: flatSlots,
         gamesPerTeam: gamesPerTeamNum,
+        gameDurationMinutes: gameDurationNum,
         startDate,
         endDate,
         // Read here (in the browser) rather than on the server, since the
@@ -538,6 +543,21 @@ function ScheduleGenerator({
         Schedule generation stops once every team has reached this many games, even if the end date hasn&apos;t
         been reached yet. If the date range and slots run out first, some teams may fall short — you&apos;ll see a
         warning below when that happens.
+      </p>
+
+      <label className="form-label">Game duration (minutes)</label>
+      <input
+        type="number"
+        min={1}
+        value={gameDuration}
+        onChange={(e) => setGameDuration(e.target.value)}
+        className="form-input"
+        placeholder="e.g. 60"
+        style={{ maxWidth: 120 }}
+      />
+      <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -4, marginBottom: 12 }}>
+        Used to set each game&apos;s end time — this also drives the duration column when you export the
+        schedule for GameChanger.
       </p>
 
       <label className="form-label">Season start date</label>

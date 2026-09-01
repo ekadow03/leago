@@ -52,7 +52,7 @@ export default async function AdminSchedulePage() {
   const { data: events } = await supabase
     .from('events')
     .select(
-      'id, type, title, location, start_time, status, season_id, division_id, home_team_id, away_team_id, week_number'
+      'id, type, title, location, start_time, end_time, status, season_id, division_id, home_team_id, away_team_id, week_number'
     )
     .eq('organization_id', org.organizationId)
     .order('start_time', { ascending: true });

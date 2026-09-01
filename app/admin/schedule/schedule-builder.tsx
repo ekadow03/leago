@@ -27,6 +27,7 @@ interface EventRow {
   title: string;
   location: string | null;
   start_time: string;
+  end_time: string | null;
   status: string;
   season_id: string | null;
   division_id: string | null;
@@ -170,6 +171,7 @@ export default function ScheduleBuilder({
           title,
           location: location || null,
           start_time: new Date(startTime).toISOString(),
+          end_time: null,
           status: 'draft',
           season_id: selectedSeasonId || null,
           division_id: selectedDivisionId || null,
@@ -305,15 +307,32 @@ export default function ScheduleBuilder({
       return;
     }
 
-    const durationInput = prompt(
-      'Game duration in minutes (GameChanger requires one — applied to every exported game):',
-      '60'
-    );
-    if (durationInput === null) return;
-    const duration = Math.round(Number(durationInput));
-    if (!Number.isFinite(duration) || duration <= 0) {
-      alert('Enter a whole number of minutes greater than 0.');
-      return;
+    // Games generated with a game duration already carry their own
+    // end_time (see the "Game duration" field on the schedule generator),
+    // so use that game's own start/end gap when it's there. Only games
+    // created before that field existed (or added manually without an
+    // end time) fall back to a single duration applied to all of them.
+    const missingDuration = gameEvents.some((ev) => !ev.end_time);
+    let fallbackDuration = 60;
+    if (missingDuration) {
+      const durationInput = prompt(
+        'Some games have no stored duration (created before the game-duration field, or added manually). ' +
+          'Enter a duration in minutes to use for those:',
+        '60'
+      );
+      if (durationInput === null) return;
+      fallbackDuration = Math.round(Number(durationInput));
+      if (!Number.isFinite(fallbackDuration) || fallbackDuration <= 0) {
+        alert('Enter a whole number of minutes greater than 0.');
+        return;
+      }
+    }
+    function durationFor(ev: EventRow): number {
+      if (ev.end_time) {
+        const mins = Math.round((new Date(ev.end_time).getTime() - new Date(ev.start_time).getTime()) / 60000);
+        if (mins > 0) return mins;
+      }
+      return fallbackDuration;
     }
 
     // GameChanger matches teams by name only (no division field in its
@@ -343,7 +362,7 @@ export default function ScheduleBuilder({
         teamName(ev.home_team_id),
         teamName(ev.away_team_id),
         ev.location ?? '',
-        String(duration),
+        String(durationFor(ev)),
       ]);
     });
 
