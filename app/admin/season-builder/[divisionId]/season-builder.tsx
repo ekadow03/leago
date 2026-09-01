@@ -430,6 +430,10 @@ function ScheduleGenerator({
         gamesPerTeam: gamesPerTeamNum,
         startDate,
         endDate,
+        // Read here (in the browser) rather than on the server, since the
+        // server action runs on Vercel in UTC and has no idea what "5pm"
+        // is supposed to mean for this league.
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
       if ('error' in res) {
         setError(res.error);

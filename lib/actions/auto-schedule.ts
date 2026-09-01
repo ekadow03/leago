@@ -44,6 +44,12 @@ interface GenerateScheduleInput {
   gamesPerTeam: number;
   startDate: string; // "2026-09-01"
   endDate: string; // "2026-11-15" — a hard cap, not a target
+  // IANA zone (e.g. "America/Los_Angeles"), read from the admin's own
+  // browser via Intl.DateTimeFormat().resolvedOptions().timeZone. This
+  // runs as a server action, and the server's own clock is UTC (Vercel) —
+  // without this, "5pm" would get stamped as 5pm UTC instead of 5pm in
+  // the league's actual timezone. Falls back to UTC if somehow missing.
+  timeZone?: string;
 }
 
 /**
@@ -77,11 +83,48 @@ function buildRoundRobinCycle(teamIds: string[]): (string | null)[][][] {
   return rounds;
 }
 
-function formatDateAtTime(date: Date, time: string): string {
+// Converts a calendar date + wall-clock "HH:MM" into the correct UTC
+// instant for a given IANA timezone, handling DST correctly (a season
+// can easily span a fall-back/spring-forward transition). Works by
+// guessing the UTC instant naively, asking Intl what wall-clock time
+// that guess renders as in the target zone, then correcting by the
+// difference — the standard round-trip technique for this without a
+// timezone library.
+function zonedDateTimeToIso(date: Date, time: string, timeZone: string): string {
   const [hours, minutes] = time.split(':').map(Number);
-  const d = new Date(date);
-  d.setHours(hours, minutes, 0, 0);
-  return d.toISOString();
+  const year = date.getFullYear();
+  const month = date.getMonth();
+  const day = date.getDate();
+
+  const guessMs = Date.UTC(year, month, day, hours, minutes, 0);
+
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+
+  const parts: Record<string, string> = {};
+  for (const part of dtf.formatToParts(new Date(guessMs))) {
+    if (part.type !== 'literal') parts[part.type] = part.value;
+  }
+
+  const renderedAsUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    parts.hour === '24' ? 0 : Number(parts.hour),
+    Number(parts.minute),
+    Number(parts.second)
+  );
+
+  const offsetMs = renderedAsUtc - guessMs;
+  return new Date(guessMs - offsetMs).toISOString();
 }
 
 type GenerateScheduleResult =
@@ -104,6 +147,8 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     if (!Number.isFinite(input.gamesPerTeam) || input.gamesPerTeam < 1) {
       return { error: 'Set how many games each team should play (at least 1).' };
     }
+
+    const timeZone = input.timeZone || 'UTC';
 
     const admin = createAdminClient();
 
@@ -205,7 +250,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
 
       const configuredSlots = slotsByDay.get(date.getDay())!;
       const availableSlots = configuredSlots.filter((slot) => {
-        const isoTime = formatDateAtTime(date, slot.time);
+        const isoTime = zonedDateTimeToIso(date, slot.time, timeZone);
         const taken = occupied.has(`${slot.field}|${isoTime}`);
         if (taken) conflictsAvoided++;
         return !taken;
@@ -221,7 +266,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
       const forThisDate = pendingMatchups.splice(0, availableSlots.length);
       forThisDate.forEach(([homeId, awayId], i) => {
         const slot = availableSlots[i];
-        const isoTime = formatDateAtTime(date, slot.time);
+        const isoTime = zonedDateTimeToIso(date, slot.time, timeZone);
 
         eventsToInsert.push({
           organization_id: input.organizationId,
