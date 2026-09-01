@@ -75,6 +75,25 @@ function csvField(value: string): string {
   return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
+// SportConnect Download's League Bulk Import expects
+// SortOrder/RoundNo/HomeTeam/AwayTeam/MatchDate/StartTime/EndTime/
+// Location/Field columns — MatchDate as unpadded M/D/YYYY (e.g. "11/9/2011",
+// not "11/09/2011"), and Start/EndTime as 24-hour HH:MM (not AM/PM like
+// GameChanger's format). Location and Field are separate columns there
+// (a venue, and a specific field/court within it) where this app only
+// tracks one field name per game — see handleExportSportConnect() for how
+// that's bridged.
+function formatDateForSportConnect(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+}
+
+function formatTime24hForSportConnect(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export default function ScheduleBuilder({
   organizationId,
   organizationName,
@@ -385,6 +404,84 @@ export default function ScheduleBuilder({
     alert(notes.join(' '));
   }
 
+  // Same source data as the GameChanger export, in SportConnect Download's
+  // own column layout — see the format comment above
+  // formatDateForSportConnect(). SportConnect splits a game's venue
+  // (Location) from a specific field/court within it (Field), which this
+  // app doesn't model separately — every game's stored field name (e.g.
+  // "Field 1") goes in Field, and a venue name entered once at export time
+  // is applied to every row's Location.
+  function handleExportSportConnect() {
+    const gameEvents = filteredEvents.filter(
+      (ev) => ev.type === 'game' && ev.home_team_id && ev.away_team_id
+    );
+    const skipped = filteredEvents.length - gameEvents.length;
+
+    if (gameEvents.length === 0) {
+      alert('No games with both a home and away team set in the current view — pick a season/division with a generated schedule first.');
+      return;
+    }
+
+    const venue = prompt(
+      'Venue/location name for every exported game (SportConnect\'s Location column — leave blank if your ' +
+        'league only tracks fields, not a venue name):',
+      ''
+    );
+    if (venue === null) return;
+
+    const missingDuration = gameEvents.some((ev) => !ev.end_time);
+    let fallbackDuration = 60;
+    if (missingDuration) {
+      const durationInput = prompt(
+        'Some games have no stored duration (created before the game-duration field, or added manually). ' +
+          'Enter a duration in minutes to use for those:',
+        '60'
+      );
+      if (durationInput === null) return;
+      fallbackDuration = Math.round(Number(durationInput));
+      if (!Number.isFinite(fallbackDuration) || fallbackDuration <= 0) {
+        alert('Enter a whole number of minutes greater than 0.');
+        return;
+      }
+    }
+    function endTimeIsoFor(ev: EventRow): string {
+      if (ev.end_time) return ev.end_time;
+      return new Date(new Date(ev.start_time).getTime() + fallbackDuration * 60000).toISOString();
+    }
+
+    const rows: string[][] = [
+      ['SortOrder', 'RoundNo', 'HomeTeam', 'AwayTeam', 'MatchDate', 'StartTime', 'EndTime', 'Location', 'Field'],
+    ];
+    gameEvents.forEach((ev, i) => {
+      rows.push([
+        String(i + 1),
+        ev.week_number != null ? String(ev.week_number) : '',
+        teamName(ev.home_team_id),
+        teamName(ev.away_team_id),
+        formatDateForSportConnect(ev.start_time),
+        formatTime24hForSportConnect(ev.start_time),
+        formatTime24hForSportConnect(endTimeIsoFor(ev)),
+        venue,
+        ev.location ?? '',
+      ]);
+    });
+
+    const csv = rows.map((row) => row.map(csvField).join(',')).join('\n') + '\n';
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'sportconnect-schedule-export.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+
+    const notes: string[] = [`Exported ${gameEvents.length} game(s).`];
+    if (skipped > 0) {
+      notes.push(`Skipped ${skipped} event(s) without both teams assigned (practices, league events, or games missing a team).`);
+    }
+    alert(notes.join(' '));
+  }
+
   function startEdit(ev: EventRow) {
     setEditingId(ev.id);
     setEditTitle(ev.title);
@@ -588,14 +685,17 @@ export default function ScheduleBuilder({
             <button onClick={handleExportGameChanger} className="btn-small">
               Export for GameChanger
             </button>
+            <button onClick={handleExportSportConnect} className="btn-small">
+              Export for SportConnect
+            </button>
             <button onClick={() => setShowForm((s) => !s)} className="btn-small" style={{ marginLeft: 'auto' }}>
               {showForm ? 'Cancel' : '+ Add event'}
             </button>
           </div>
           <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -12, marginBottom: 20 }}>
-            Export downloads a CSV of the games currently shown above (filtered by the season/division picked
-            here) in the format GameChanger&apos;s Bulk Schedule Import expects. Team names must already match
-            your GameChanger organization&apos;s roster exactly.
+            Both exports download a CSV of the games currently shown above (filtered by the season/division
+            picked here), formatted for that platform&apos;s bulk schedule import. Team names must already match
+            the roster already set up on that platform exactly.
           </p>
 
           {showForm && (
