@@ -1,7 +1,7 @@
 // app/admin/season-builder/[divisionId]/season-builder.tsx
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import Link from 'next/link';
 import { bulkCreateTeams } from '@/lib/actions/team-import';
 import { createTeam } from '@/lib/actions/teams';
@@ -12,9 +12,9 @@ interface Team {
   name: string;
 }
 
-interface DaySlot {
+interface TimeGroup {
   time: string;
-  field: string;
+  fields: string[];
 }
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -189,69 +189,114 @@ function TeamImport({
   );
 }
 
-function DaySlotEditor({
-  day,
-  slots,
+function TimeGroupRow({
+  time,
   fields,
-  onAdd,
-  onRemove,
+  allFields,
+  onAddField,
+  onRemoveField,
+  onRemoveTime,
 }: {
-  day: number;
-  slots: DaySlot[];
+  time: string;
   fields: string[];
-  onAdd: (time: string, field: string) => void;
-  onRemove: (index: number) => void;
+  allFields: string[];
+  onAddField: (field: string) => void;
+  onRemoveField: (field: string) => void;
+  onRemoveTime: () => void;
 }) {
-  const [time, setTime] = useState('17:00');
-  const [field, setField] = useState(fields[0] ?? '');
+  const availableToAdd = allFields.filter((f) => !fields.includes(f));
+  const selectRef = useRef<HTMLSelectElement>(null);
 
   return (
-    <div style={{ background: 'var(--gray-light)', borderRadius: 10, padding: 14, marginBottom: 10 }}>
-      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>{DAY_LABELS[day]} slots</div>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+      <span style={{ fontWeight: 700, fontSize: 13, minWidth: 90 }}>{formatTime12h(time)}</span>
 
-      {slots.length > 0 && (
-        <div className="chip-list">
-          {slots.map((s, i) => (
-            <span key={`${s.time}-${s.field}`} className="chip">
-              {formatTime12h(s.time)} · {s.field}
-              <button onClick={() => onRemove(i)}>×</button>
-            </span>
-          ))}
-        </div>
-      )}
+      {fields.map((f) => (
+        <span key={f} className="chip">
+          {f}
+          <button onClick={() => onRemoveField(f)}>×</button>
+        </span>
+      ))}
 
-      <div className="add-chip-row">
-        <input
-          type="time"
-          value={time}
-          onChange={(e) => setTime(e.target.value)}
-          className="form-input"
-          style={{ width: 160 }}
-        />
-        <select
-          value={field}
-          onChange={(e) => setField(e.target.value)}
-          className="form-input"
-          style={{ width: 170 }}
-          disabled={fields.length === 0}
-        >
-          {fields.length === 0 ? (
-            <option value="">Add a field first…</option>
-          ) : (
-            fields.map((f) => (
+      {availableToAdd.length > 0 ? (
+        <>
+          <select ref={selectRef} className="form-input" style={{ width: 150, marginBottom: 0 }} key={availableToAdd.join(',')}>
+            {availableToAdd.map((f) => (
               <option key={f} value={f}>
                 {f}
               </option>
-            ))
-          )}
-        </select>
-        <button
-          type="button"
-          onClick={() => field && onAdd(time, field)}
-          className="btn-small"
-          disabled={!field}
-        >
-          + Add slot
+            ))}
+          </select>
+          <button
+            type="button"
+            className="btn-small"
+            onClick={() => {
+              if (selectRef.current?.value) onAddField(selectRef.current.value);
+            }}
+          >
+            + Add field
+          </button>
+        </>
+      ) : (
+        <span style={{ fontSize: 12, color: 'var(--gray)' }}>All fields added</span>
+      )}
+
+      <button type="button" onClick={onRemoveTime} className="btn-small" style={{ marginLeft: 'auto' }}>
+        Remove time
+      </button>
+    </div>
+  );
+}
+
+function DaySlotEditor({
+  day,
+  timeGroups,
+  fields,
+  onAddTime,
+  onRemoveTime,
+  onAddField,
+  onRemoveField,
+}: {
+  day: number;
+  timeGroups: TimeGroup[];
+  fields: string[];
+  onAddTime: (time: string) => void;
+  onRemoveTime: (time: string) => void;
+  onAddField: (time: string, field: string) => void;
+  onRemoveField: (time: string, field: string) => void;
+}) {
+  const [newTime, setNewTime] = useState('17:00');
+
+  return (
+    <div style={{ background: 'var(--gray-light)', borderRadius: 10, padding: 14, marginBottom: 10 }}>
+      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 10 }}>{DAY_LABELS[day]} slots</div>
+
+      {timeGroups.length === 0 && (
+        <p style={{ fontSize: 12, color: 'var(--gray)', marginBottom: 10 }}>No times yet — add one below.</p>
+      )}
+
+      {timeGroups.map((g) => (
+        <TimeGroupRow
+          key={g.time}
+          time={g.time}
+          fields={g.fields}
+          allFields={fields}
+          onAddField={(field) => onAddField(g.time, field)}
+          onRemoveField={(field) => onRemoveField(g.time, field)}
+          onRemoveTime={() => onRemoveTime(g.time)}
+        />
+      ))}
+
+      <div className="add-chip-row" style={{ marginTop: timeGroups.length > 0 ? 4 : 0 }}>
+        <input
+          type="time"
+          value={newTime}
+          onChange={(e) => setNewTime(e.target.value)}
+          className="form-input"
+          style={{ width: 160 }}
+        />
+        <button type="button" onClick={() => onAddTime(newTime)} className="btn-small">
+          + Add time
         </button>
       </div>
     </div>
@@ -276,7 +321,7 @@ function ScheduleGenerator({
   const [fields, setFields] = useState<string[]>([]);
   const [newField, setNewField] = useState('');
   const [activeDays, setActiveDays] = useState<number[]>([]);
-  const [daySlots, setDaySlots] = useState<Record<number, DaySlot[]>>({});
+  const [daySlots, setDaySlots] = useState<Record<number, TimeGroup[]>>({});
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -295,12 +340,13 @@ function ScheduleGenerator({
 
   function removeField(field: string) {
     setFields((prev) => prev.filter((f) => f !== field));
-    // Slots pointing at a removed field would silently reference a field
-    // that no longer exists in the picker — drop them too.
+    // A time group pointing at a removed field would silently reference a
+    // field that no longer exists in the picker — drop it from every
+    // group across every day too.
     setDaySlots((prev) => {
-      const next: Record<number, DaySlot[]> = {};
-      for (const [day, slots] of Object.entries(prev)) {
-        next[Number(day)] = slots.filter((s) => s.field !== field);
+      const next: Record<number, TimeGroup[]> = {};
+      for (const [day, groups] of Object.entries(prev)) {
+        next[Number(day)] = groups.map((g) => ({ ...g, fields: g.fields.filter((f) => f !== field) }));
       }
       return next;
     });
@@ -320,22 +366,41 @@ function ScheduleGenerator({
     });
   }
 
-  function addSlot(day: number, time: string, field: string) {
+  function addTimeToDay(day: number, time: string) {
     setDaySlots((prev) => {
       const existing = prev[day] ?? [];
-      if (existing.some((s) => s.time === time && s.field === field)) return prev;
+      if (existing.some((g) => g.time === time)) return prev;
       return {
         ...prev,
-        [day]: [...existing, { time, field }].sort((a, b) => a.time.localeCompare(b.time)),
+        [day]: [...existing, { time, fields: [] }].sort((a, b) => a.time.localeCompare(b.time)),
       };
     });
   }
 
-  function removeSlot(day: number, index: number) {
-    setDaySlots((prev) => ({ ...prev, [day]: (prev[day] ?? []).filter((_, i) => i !== index) }));
+  function removeTimeFromDay(day: number, time: string) {
+    setDaySlots((prev) => ({ ...prev, [day]: (prev[day] ?? []).filter((g) => g.time !== time) }));
   }
 
-  const totalSlots = Object.values(daySlots).reduce((sum, slots) => sum + slots.length, 0);
+  function addFieldToTime(day: number, time: string, field: string) {
+    setDaySlots((prev) => ({
+      ...prev,
+      [day]: (prev[day] ?? []).map((g) =>
+        g.time === time && !g.fields.includes(field) ? { ...g, fields: [...g.fields, field] } : g
+      ),
+    }));
+  }
+
+  function removeFieldFromTime(day: number, time: string, field: string) {
+    setDaySlots((prev) => ({
+      ...prev,
+      [day]: (prev[day] ?? []).map((g) => (g.time === time ? { ...g, fields: g.fields.filter((f) => f !== field) } : g)),
+    }));
+  }
+
+  const totalSlots = Object.values(daySlots).reduce(
+    (sum, groups) => sum + groups.reduce((s, g) => s + g.fields.length, 0),
+    0
+  );
   const canGenerate = teamCount >= 2 && totalSlots > 0 && !!startDate && !!endDate;
 
   async function handleGenerate() {
@@ -343,8 +408,8 @@ function ScheduleGenerator({
     setError(null);
     setResult(null);
     try {
-      const flatSlots = Object.entries(daySlots).flatMap(([day, slots]) =>
-        slots.map((s) => ({ dayOfWeek: Number(day), time: s.time, field: s.field }))
+      const flatSlots = Object.entries(daySlots).flatMap(([day, groups]) =>
+        groups.flatMap((g) => g.fields.map((field) => ({ dayOfWeek: Number(day), time: g.time, field })))
       );
       const res = await generateSeasonSchedule({
         organizationId,
@@ -371,10 +436,13 @@ function ScheduleGenerator({
       <h2>Generate season schedule</h2>
       <p style={{ fontSize: 13, color: 'var(--gray)', marginTop: -12, marginBottom: 16 }}>
         Builds a fair round-robin and repeats it across your whole season, so every team plays a roughly equal
-        number of games. Each day can have its own times and fields — handy since a field is often shared with
-        another division and only free at certain times. Games are created as drafts — review and publish them
-        from the <Link href="/admin/schedule" style={{ color: 'var(--green-dark)' }}>Schedule</Link> page when
-        ready.
+        number of games. Each day can have its own times, and each time can offer more than one field for
+        simultaneous games — handy since a field is often shared with another division and only free at certain
+        times. Games are created as drafts — review and publish them from the{' '}
+        <Link href="/admin/schedule" style={{ color: 'var(--green-dark)' }}>
+          Schedule
+        </Link>{' '}
+        page when ready.
       </p>
 
       {existingGameCount > 0 && (
@@ -410,8 +478,9 @@ function ScheduleGenerator({
 
       <label className="form-label">Game days &amp; time slots</label>
       <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -8, marginBottom: 12 }}>
-        Click a day to configure it, then add each time/field slot it should offer — a weekday might only need
-        one slot at 5:00 PM, while Saturday could offer several from 8:00 AM to 9:00 PM across different fields.
+        Click a day to configure it. Add a time, then add every field that has a game at that time — a weekday
+        might only need 5:00 PM on one field, while Saturday could have 8:00 AM across two fields, 10:00 AM
+        across two more, and so on.
       </p>
       <div className="day-grid">
         {DAY_LABELS.map((label, i) => (
@@ -430,10 +499,12 @@ function ScheduleGenerator({
         <DaySlotEditor
           key={day}
           day={day}
-          slots={daySlots[day] ?? []}
+          timeGroups={daySlots[day] ?? []}
           fields={fields}
-          onAdd={(time, field) => addSlot(day, time, field)}
-          onRemove={(index) => removeSlot(day, index)}
+          onAddTime={(time) => addTimeToDay(day, time)}
+          onRemoveTime={(time) => removeTimeFromDay(day, time)}
+          onAddField={(time, field) => addFieldToTime(day, time, field)}
+          onRemoveField={(time, field) => removeFieldFromTime(day, time, field)}
         />
       ))}
 
@@ -457,7 +528,7 @@ function ScheduleGenerator({
       </button>
       {!canGenerate && (
         <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: 8 }}>
-          Need at least 2 teams, at least one day with a time/field slot configured, and both dates set.
+          Need at least 2 teams, at least one time with a field added, and both dates set.
         </p>
       )}
     </div>
