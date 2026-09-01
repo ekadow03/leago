@@ -685,3 +685,69 @@ select:focus-visible {
   background: var(--navy);
   color: var(--white);
 }
+
+/* ---------------------------------------------------------------- */
+/* Season builder (teams import + auto-scheduler)                    */
+/* ---------------------------------------------------------------- */
+.day-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.day-toggle {
+  font-weight: 600;
+  font-size: 13px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1.5px solid var(--gray-light);
+  background: var(--white);
+  color: var(--gray);
+  cursor: pointer;
+}
+
+.day-toggle.active {
+  border-color: var(--green);
+  background: rgba(34, 197, 94, 0.1);
+  color: var(--green-dark);
+}
+
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--gray-light);
+  color: var(--navy);
+}
+
+.chip button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--gray);
+  font-weight: 700;
+  padding: 0;
+  line-height: 1;
+}
+
+.add-chip-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.add-chip-row .form-input {
+  margin-bottom: 0;
+}
