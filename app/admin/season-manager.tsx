@@ -3,7 +3,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { createSeason } from '@/lib/actions/seasons';
+import { createSeason, setSeasonArchived, deleteSeason } from '@/lib/actions/seasons';
 import { createDivision, updateDivisionPriority } from '@/lib/actions/divisions';
 import { createField, deleteField } from '@/lib/actions/fields';
 import { setFieldPriority, removeFieldPriority } from '@/lib/actions/field-priorities';
@@ -79,6 +79,7 @@ export default function SeasonManager({
     setFieldPriorities((prev) => prev.filter((p) => !(p.field_id === fieldId && p.division_id === divisionId)));
   }
   const [showSeasonForm, setShowSeasonForm] = useState(initialSeasons.length === 0);
+  const [showArchived, setShowArchived] = useState(false);
   const [seasonName, setSeasonName] = useState('');
   const [regOpen, setRegOpen] = useState('');
   const [regClose, setRegClose] = useState('');
@@ -129,6 +130,20 @@ export default function SeasonManager({
     setDivisions((prev) => prev.map((d) => (d.id === divisionId ? { ...d, schedule_priority: priority } : d)));
   }
 
+  function handleSeasonArchiveChanged(seasonId: string, archived: boolean) {
+    setSeasons((prev) =>
+      prev.map((s) => (s.id === seasonId ? { ...s, status: archived ? 'archived' : 'draft' } : s))
+    );
+  }
+
+  function handleSeasonDeleted(seasonId: string) {
+    setSeasons((prev) => prev.filter((s) => s.id !== seasonId));
+    setDivisions((prev) => prev.filter((d) => d.season_id !== seasonId));
+  }
+
+  const activeSeasons = seasons.filter((s) => s.status !== 'archived');
+  const archivedSeasons = seasons.filter((s) => s.status === 'archived');
+
   return (
     <div>
       {error && <p style={{ color: '#B23A2E', marginBottom: 12 }}>{error}</p>}
@@ -178,7 +193,7 @@ export default function SeasonManager({
         <p style={{ color: 'var(--gray)' }}>No seasons yet — create one above to start scheduling.</p>
       )}
 
-      {seasons.map((season) => (
+      {activeSeasons.map((season) => (
         <SeasonCard
           key={season.id}
           organizationId={organizationId}
@@ -191,8 +206,36 @@ export default function SeasonManager({
           onPriorityChanged={handlePriorityChanged}
           onFieldPriorityChanged={applyFieldPriority}
           onFieldPriorityRemoved={removeFieldPriorityLocal}
+          onArchiveChanged={handleSeasonArchiveChanged}
+          onDeleted={handleSeasonDeleted}
         />
       ))}
+
+      {archivedSeasons.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <button type="button" onClick={() => setShowArchived((s) => !s)} className="btn-small">
+            {showArchived ? 'Hide' : 'Show'} archived seasons ({archivedSeasons.length})
+          </button>
+          {showArchived &&
+            archivedSeasons.map((season) => (
+              <SeasonCard
+                key={season.id}
+                organizationId={organizationId}
+                season={season}
+                divisions={divisions.filter((d) => d.season_id === season.id)}
+                teamCounts={teamCounts}
+                fields={fields}
+                fieldPriorities={fieldPriorities}
+                onDivisionCreated={handleDivisionCreated}
+                onPriorityChanged={handlePriorityChanged}
+                onFieldPriorityChanged={applyFieldPriority}
+                onFieldPriorityRemoved={removeFieldPriorityLocal}
+                onArchiveChanged={handleSeasonArchiveChanged}
+                onDeleted={handleSeasonDeleted}
+              />
+            ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -459,6 +502,8 @@ function SeasonCard({
   onPriorityChanged,
   onFieldPriorityChanged,
   onFieldPriorityRemoved,
+  onArchiveChanged,
+  onDeleted,
 }: {
   organizationId: string;
   season: Season;
@@ -470,6 +515,8 @@ function SeasonCard({
   onPriorityChanged: (divisionId: string, priority: number) => void;
   onFieldPriorityChanged: (fieldId: string, divisionId: string, priority: number) => void;
   onFieldPriorityRemoved: (fieldId: string, divisionId: string) => void;
+  onArchiveChanged: (seasonId: string, archived: boolean) => void;
+  onDeleted: (seasonId: string) => void;
 }) {
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('');
@@ -478,6 +525,51 @@ function SeasonCard({
   const [price, setPrice] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [archiving, setArchiving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const isArchived = season.status === 'archived';
+
+  async function handleToggleArchive() {
+    setArchiving(true);
+    setError(null);
+    try {
+      const result = await setSeasonArchived(organizationId, season.id, !isArchived);
+      if ('error' in result) {
+        setError(result.error);
+        return;
+      }
+      onArchiveChanged(season.id, !isArchived);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setArchiving(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (
+      !confirm(
+        `Delete ${season.name}? This can't be undone. It only works if the season has no registrations, teams, or scheduled events — archive it instead if you want to keep that history.`
+      )
+    ) {
+      return;
+    }
+    setDeleting(true);
+    setError(null);
+    try {
+      const result = await deleteSeason(organizationId, season.id);
+      if ('error' in result) {
+        setError(result.error);
+        return;
+      }
+      onDeleted(season.id);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -543,10 +635,22 @@ function SeasonCard({
               ` · registration opens ${new Date(season.registration_open_at).toLocaleDateString()}`}
           </p>
         </div>
-        <button onClick={() => setShowForm((s) => !s)} className="btn-small">
-          {showForm ? 'Cancel' : '+ Add division'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {!isArchived && (
+            <button onClick={() => setShowForm((s) => !s)} className="btn-small">
+              {showForm ? 'Cancel' : '+ Add division'}
+            </button>
+          )}
+          <button onClick={handleToggleArchive} disabled={archiving} className="btn-small">
+            {archiving ? '…' : isArchived ? 'Unarchive' : 'Archive'}
+          </button>
+          <button onClick={handleDelete} disabled={deleting} className="btn-small">
+            {deleting ? 'Deleting…' : 'Delete'}
+          </button>
+        </div>
       </div>
+
+      {error && <p style={{ color: '#B23A2E', fontSize: 14, marginTop: 8 }}>{error}</p>}
 
       {showForm && (
         <form onSubmit={handleCreate} style={{ marginTop: 16 }}>
@@ -570,7 +674,6 @@ function SeasonCard({
             onChange={(e) => setPrice(e.target.value)}
             className="form-input"
           />
-          {error && <p style={{ color: '#B23A2E', fontSize: 14 }}>{error}</p>}
           <button type="submit" disabled={submitting || !name} className="btn-primary" style={{ width: '100%' }}>
             {submitting ? 'Adding…' : 'Add division'}
           </button>
