@@ -76,6 +76,14 @@ export default async function SeasonBuilderPage({
     .eq('organization_id', organizationId)
     .order('name', { ascending: true });
 
+  // Blackouts are season-scoped (shared across every division in the
+  // season, not just this one) but managed here in the schedule builder,
+  // right alongside the slots/dates they actually constrain.
+  const { data: blackouts } = await supabase
+    .from('blackouts')
+    .select('id, season_id, field_name, kind, blackout_date, day_of_week, start_time, end_time, label')
+    .eq('season_id', division.season_id);
+
   return (
     <div className="admin-page">
       <Nav />
@@ -95,6 +103,7 @@ export default async function SeasonBuilderPage({
           initialTeams={teams ?? []}
           existingGameCount={(existingGames as any)?.count ?? 0}
           orgFields={orgFields ?? []}
+          initialBlackouts={(blackouts as any) ?? []}
         />
       </div>
     </div>

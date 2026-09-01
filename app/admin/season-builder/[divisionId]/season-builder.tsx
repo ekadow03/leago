@@ -5,6 +5,7 @@ import { useState, useRef } from 'react';
 import Link from 'next/link';
 import { generateSeasonSchedule } from '@/lib/actions/auto-schedule';
 import { createField } from '@/lib/actions/fields';
+import { createBlackout, deleteBlackout } from '@/lib/actions/blackouts';
 
 interface Team {
   id: string;
@@ -14,6 +15,18 @@ interface Team {
 interface OrgField {
   id: string;
   name: string;
+}
+
+interface Blackout {
+  id: string;
+  season_id: string;
+  field_name: string | null;
+  kind: 'date' | 'weekly' | 'daily';
+  blackout_date: string | null;
+  day_of_week: number | null;
+  start_time: string | null;
+  end_time: string | null;
+  label: string | null;
 }
 
 interface TimeGroup {
@@ -38,6 +51,7 @@ export default function SeasonBuilder({
   initialTeams,
   existingGameCount,
   orgFields,
+  initialBlackouts,
 }: {
   organizationId: string;
   seasonId: string;
@@ -46,6 +60,7 @@ export default function SeasonBuilder({
   initialTeams: Team[];
   existingGameCount: number;
   orgFields: OrgField[];
+  initialBlackouts: Blackout[];
 }) {
   return (
     <div>
@@ -58,6 +73,7 @@ export default function SeasonBuilder({
         teamCount={initialTeams.length}
         existingGameCount={existingGameCount}
         orgFields={orgFields}
+        initialBlackouts={initialBlackouts}
       />
     </div>
   );
@@ -215,6 +231,7 @@ function ScheduleGenerator({
   teamCount,
   existingGameCount,
   orgFields,
+  initialBlackouts,
 }: {
   organizationId: string;
   seasonId: string;
@@ -223,7 +240,10 @@ function ScheduleGenerator({
   teamCount: number;
   existingGameCount: number;
   orgFields: OrgField[];
+  initialBlackouts: Blackout[];
 }) {
+  const [blackouts, setBlackouts] = useState(initialBlackouts);
+
   // Fields selected for THIS division's schedule — a subset of the
   // organization's shared field registry (migration 0016). Picking from
   // that shared list, rather than free-typing a name per division, is
@@ -414,6 +434,15 @@ function ScheduleGenerator({
         </p>
       )}
 
+      <BlackoutPanel
+        organizationId={organizationId}
+        seasonId={seasonId}
+        fields={availableOrgFields}
+        blackouts={blackouts}
+        onAdded={(b) => setBlackouts((prev) => [...prev, b])}
+        onRemoved={(id) => setBlackouts((prev) => prev.filter((b) => b.id !== id))}
+      />
+
       <label className="form-label">Fields</label>
       <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -8, marginBottom: 12 }}>
         Fields come from your organization&apos;s shared field list (manage the full list from the admin Dashboard)
@@ -544,6 +573,243 @@ function ScheduleGenerator({
           Need at least 2 teams, at least one time with a field added, a games-per-team target of 1 or more, and
           both dates set.
         </p>
+      )}
+    </div>
+  );
+}
+
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function describeBlackout(b: Blackout): string {
+  const timeRange = b.start_time && b.end_time ? `${formatTime12h(b.start_time)}–${formatTime12h(b.end_time)}` : 'All day';
+  const field = b.field_name ? b.field_name : 'All fields';
+  let when: string;
+  if (b.kind === 'date' && b.blackout_date) {
+    when = new Date(`${b.blackout_date}T00:00:00`).toLocaleDateString(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  } else if (b.kind === 'weekly' && b.day_of_week !== null) {
+    when = `Every ${DAY_NAMES[b.day_of_week]}`;
+  } else {
+    when = 'Every day';
+  }
+  return `${when} · ${timeRange} · ${field}${b.label ? ` — ${b.label}` : ''}`;
+}
+
+// Blackouts are season-scoped (migration 0017) — set here, right next to
+// the slots/dates they constrain, but they apply to every division that
+// shares this season, not just the one whose Schedule screen this is.
+function BlackoutPanel({
+  organizationId,
+  seasonId,
+  fields,
+  blackouts,
+  onAdded,
+  onRemoved,
+}: {
+  organizationId: string;
+  seasonId: string;
+  fields: OrgField[];
+  blackouts: Blackout[];
+  onAdded: (b: Blackout) => void;
+  onRemoved: (id: string) => void;
+}) {
+  const [showForm, setShowForm] = useState(false);
+  const [kind, setKind] = useState<'date' | 'weekly' | 'daily'>('date');
+  const [blackoutDate, setBlackoutDate] = useState('');
+  const [dayOfWeek, setDayOfWeek] = useState('0');
+  const [fullDay, setFullDay] = useState(true);
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
+  const [fieldName, setFieldName] = useState('');
+  const [label, setLabel] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleAdd(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      const result = await createBlackout({
+        organizationId,
+        seasonId,
+        kind,
+        fieldName: fieldName || undefined,
+        blackoutDate: kind === 'date' ? blackoutDate : undefined,
+        dayOfWeek: kind === 'weekly' ? Number(dayOfWeek) : undefined,
+        startTime: fullDay ? undefined : startTime || undefined,
+        endTime: fullDay ? undefined : endTime || undefined,
+        label: label || undefined,
+      });
+      if ('error' in result) {
+        setError(result.error);
+        return;
+      }
+      onAdded({
+        id: result.id,
+        season_id: seasonId,
+        field_name: fieldName || null,
+        kind,
+        blackout_date: kind === 'date' ? blackoutDate : null,
+        day_of_week: kind === 'weekly' ? Number(dayOfWeek) : null,
+        start_time: fullDay ? null : startTime || null,
+        end_time: fullDay ? null : endTime || null,
+        label: label.trim() || null,
+      });
+      setBlackoutDate('');
+      setStartTime('');
+      setEndTime('');
+      setFieldName('');
+      setLabel('');
+      setFullDay(true);
+      setShowForm(false);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleRemove(blackoutId: string) {
+    if (!confirm('Remove this blackout? Future schedule generation will be able to use that time again.')) return;
+    setError(null);
+    try {
+      const result = await deleteBlackout(organizationId, blackoutId);
+      if ('error' in result) {
+        setError(result.error);
+        return;
+      }
+      onRemoved(blackoutId);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <div className="form-card" style={{ marginBottom: 24 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <h2 style={{ margin: 0 }}>Blackout dates &amp; times</h2>
+          <p style={{ fontSize: 12, color: 'var(--gray)', margin: '4px 0 0' }}>
+            Dates/times schedule generation will skip over — a holiday, field maintenance, a standing conflict.
+            Applies to every division sharing this season, not just this one.
+          </p>
+        </div>
+        <button onClick={() => setShowForm((s) => !s)} className="btn-small">
+          {showForm ? 'Cancel' : '+ Add blackout'}
+        </button>
+      </div>
+
+      {error && <p style={{ color: '#B23A2E', fontSize: 13, marginTop: 8 }}>{error}</p>}
+
+      {showForm && (
+        <form onSubmit={handleAdd} style={{ marginTop: 12 }}>
+          <label className="form-label">Type</label>
+          <select value={kind} onChange={(e) => setKind(e.target.value as any)} className="form-input">
+            <option value="date">Specific date (e.g. a holiday)</option>
+            <option value="weekly">Same day every week this season</option>
+            <option value="daily">Every day this season</option>
+          </select>
+
+          {kind === 'date' && (
+            <>
+              <label className="form-label">Date</label>
+              <input
+                type="date"
+                value={blackoutDate}
+                onChange={(e) => setBlackoutDate(e.target.value)}
+                className="form-input"
+                required
+              />
+            </>
+          )}
+
+          {kind === 'weekly' && (
+            <>
+              <label className="form-label">Day of week</label>
+              <select value={dayOfWeek} onChange={(e) => setDayOfWeek(e.target.value)} className="form-input">
+                {DAY_NAMES.map((name, i) => (
+                  <option key={i} value={i}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, margin: '12px 0' }}>
+            <input type="checkbox" checked={fullDay} onChange={(e) => setFullDay(e.target.checked)} />
+            {kind === 'date' ? 'Block the entire day' : 'Block the entire day, every time this occurs'}
+          </label>
+
+          {!fullDay && (
+            <div style={{ display: 'flex', gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <label className="form-label">Start time</label>
+                <input
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  className="form-input"
+                  style={{ width: 160 }}
+                  required
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label className="form-label">End time</label>
+                <input
+                  type="time"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  className="form-input"
+                  style={{ width: 160 }}
+                  required
+                />
+              </div>
+            </div>
+          )}
+
+          <label className="form-label">Field</label>
+          <select value={fieldName} onChange={(e) => setFieldName(e.target.value)} className="form-input">
+            <option value="">All fields</option>
+            {fields.map((f) => (
+              <option key={f.id} value={f.name}>
+                {f.name}
+              </option>
+            ))}
+          </select>
+
+          <label className="form-label">Label (optional)</label>
+          <input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            className="form-input"
+            placeholder="e.g. Thanksgiving, Field 2 resurfacing"
+          />
+
+          <button type="submit" disabled={submitting} className="btn-primary" style={{ width: '100%' }}>
+            {submitting ? 'Adding…' : 'Add blackout'}
+          </button>
+        </form>
+      )}
+
+      {blackouts.length > 0 ? (
+        <div className="data-table-card" style={{ marginTop: 16 }}>
+          {blackouts.map((b) => (
+            <div key={b.id} className="data-row">
+              <div className="data-row-name">{describeBlackout(b)}</div>
+              <button onClick={() => handleRemove(b.id)} className="btn-small">
+                Delete
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        !showForm && <p style={{ color: 'var(--gray)', fontSize: 13, marginTop: 12 }}>No blackouts set for this season.</p>
       )}
     </div>
   );

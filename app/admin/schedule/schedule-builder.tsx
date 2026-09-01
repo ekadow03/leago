@@ -48,6 +48,32 @@ function toDatetimeLocal(iso: string) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+// GameChanger's League Bulk Schedule Import expects date/time/home/away/
+// location/duration columns, with time as "6:00 PM" (no seconds, no 24hr)
+// and duration as a plain integer count of minutes — see
+// help.gc.com/hc/en-us/articles/8780588516365. GameChanger doesn't
+// publish the exact date format alongside that, so this uses the
+// standard US MM/DD/YYYY convention; if their import rejects it, the
+// live template downloaded from your GameChanger organization's admin
+// portal is the authoritative source to match against.
+function formatDateForGameChanger(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()}`;
+}
+
+function formatTimeForGameChanger(iso: string): string {
+  const d = new Date(iso);
+  const hours = d.getHours();
+  const period = hours >= 12 ? 'PM' : 'AM';
+  const hour12 = hours % 12 === 0 ? 12 : hours % 12;
+  return `${hour12}:${String(d.getMinutes()).padStart(2, '0')} ${period}`;
+}
+
+function csvField(value: string): string {
+  return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
 export default function ScheduleBuilder({
   organizationId,
   organizationName,
@@ -263,6 +289,83 @@ export default function ScheduleBuilder({
     }
   }
 
+  // Exports whatever is currently filtered (season, and division if one
+  // is picked) as a CSV for GameChanger's League Bulk Schedule Import.
+  // Only 'game' events with both a home and away team assigned can go in
+  // — GameChanger's import has no division/practice concept, it's just
+  // games between two teams already in your GameChanger org roster.
+  function handleExportGameChanger() {
+    const gameEvents = filteredEvents.filter(
+      (ev) => ev.type === 'game' && ev.home_team_id && ev.away_team_id
+    );
+    const skipped = filteredEvents.length - gameEvents.length;
+
+    if (gameEvents.length === 0) {
+      alert('No games with both a home and away team set in the current view — pick a season/division with a generated schedule first.');
+      return;
+    }
+
+    const durationInput = prompt(
+      'Game duration in minutes (GameChanger requires one — applied to every exported game):',
+      '60'
+    );
+    if (durationInput === null) return;
+    const duration = Math.round(Number(durationInput));
+    if (!Number.isFinite(duration) || duration <= 0) {
+      alert('Enter a whole number of minutes greater than 0.');
+      return;
+    }
+
+    // GameChanger matches teams by name only (no division field in its
+    // import), so two teams sharing a name across different divisions
+    // would be ambiguous on their end — flag it rather than silently
+    // exporting something that could land on the wrong team.
+    const usedTeamIds = new Set<string>();
+    gameEvents.forEach((ev) => {
+      if (ev.home_team_id) usedTeamIds.add(ev.home_team_id);
+      if (ev.away_team_id) usedTeamIds.add(ev.away_team_id);
+    });
+    const nameCounts = new Map<string, number>();
+    teams.forEach((t) => {
+      if (usedTeamIds.has(t.id)) {
+        nameCounts.set(t.name, (nameCounts.get(t.name) ?? 0) + 1);
+      }
+    });
+    const duplicateNames = Array.from(nameCounts.entries())
+      .filter(([, count]) => count > 1)
+      .map(([name]) => name);
+
+    const rows: string[][] = [['date', 'time', 'home', 'away', 'location', 'duration']];
+    gameEvents.forEach((ev) => {
+      rows.push([
+        formatDateForGameChanger(ev.start_time),
+        formatTimeForGameChanger(ev.start_time),
+        teamName(ev.home_team_id),
+        teamName(ev.away_team_id),
+        ev.location ?? '',
+        String(duration),
+      ]);
+    });
+
+    const csv = rows.map((row) => row.map(csvField).join(',')).join('\n') + '\n';
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'gamechanger-schedule-export.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+
+    const notes: string[] = [`Exported ${gameEvents.length} game(s).`];
+    if (skipped > 0) {
+      notes.push(`Skipped ${skipped} event(s) without both teams assigned (practices, league events, or games missing a team).`);
+    }
+    if (duplicateNames.length > 0) {
+      notes.push(`Heads up — these team names appear more than once across your divisions, which GameChanger can't tell apart by name alone: ${duplicateNames.join(', ')}.`);
+    }
+    alert(notes.join(' '));
+  }
+
   function startEdit(ev: EventRow) {
     setEditingId(ev.id);
     setEditTitle(ev.title);
@@ -463,10 +566,18 @@ export default function ScheduleBuilder({
             <button onClick={handlePublishAll} className="btn-small">
               Publish all drafts
             </button>
+            <button onClick={handleExportGameChanger} className="btn-small">
+              Export for GameChanger
+            </button>
             <button onClick={() => setShowForm((s) => !s)} className="btn-small" style={{ marginLeft: 'auto' }}>
               {showForm ? 'Cancel' : '+ Add event'}
             </button>
           </div>
+          <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -12, marginBottom: 20 }}>
+            Export downloads a CSV of the games currently shown above (filtered by the season/division picked
+            here) in the format GameChanger&apos;s Bulk Schedule Import expects. Team names must already match
+            your GameChanger organization&apos;s roster exactly.
+          </p>
 
           {showForm && (
             <form onSubmit={handleCreate} className="form-card" style={{ marginBottom: 24 }}>

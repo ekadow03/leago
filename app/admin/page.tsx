@@ -75,13 +75,6 @@ export default async function AdminDashboardPage() {
     .eq('organization_id', org.organizationId)
     .order('name', { ascending: true });
 
-  const { data: blackouts } = seasonIds.length
-    ? await supabase
-        .from('blackouts')
-        .select('id, season_id, field_name, kind, blackout_date, day_of_week, start_time, end_time, label')
-        .in('season_id', seasonIds)
-    : { data: [] as any[] };
-
   return (
     <div className="admin-page">
       <Nav />
@@ -97,7 +90,6 @@ export default async function AdminDashboardPage() {
           initialDivisions={(divisions as any) ?? []}
           teamCounts={teamCounts}
           initialFields={fields ?? []}
-          initialBlackouts={(blackouts as any) ?? []}
         />
       </div>
     </div>
