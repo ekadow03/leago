@@ -23,13 +23,22 @@ export default async function DashboardPage() {
     redirect('/login?next=/dashboard');
   }
 
-  const { data: selfPerson } = await supabase
+  const { data: selfPerson, error: selfPersonError } = await supabase
     .from('people')
     .select('id, first_name, last_name, dob')
     .eq('auth_user_id', user.id)
     .single();
 
   if (!selfPerson) {
+    // The generic message on screen doesn't say why — log the real
+    // Supabase/Postgrest error server-side (visible in Vercel's function
+    // logs) so a missing-profile report can actually be diagnosed instead
+    // of guessed at from screenshots.
+    console.error('[dashboard] people lookup failed', {
+      authUserId: user.id,
+      email: user.email,
+      error: selfPersonError,
+    });
     return (
       <div>
         <Nav />

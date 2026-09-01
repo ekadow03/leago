@@ -38,13 +38,23 @@ export async function createLeagueOrganization(input: CreateLeagueInput): Promis
       return { error: 'You must be logged in to create a league.' };
     }
 
-    const { data: person } = await supabase
+    const { data: person, error: personError } = await supabase
       .from('people')
       .select('id')
       .eq('auth_user_id', user.id)
       .single();
 
     if (!person) {
+      // Logged server-side (Vercel function logs) so a "no profile
+      // found" report is actually diagnosable instead of guessed at —
+      // this specific error has previously turned out to be caused by a
+      // misconfigured NEXT_PUBLIC_SUPABASE_URL rather than a genuinely
+      // missing row, and the real Postgrest error tells you which.
+      console.error('[createLeagueOrganization] people lookup failed', {
+        authUserId: user.id,
+        email: user.email,
+        error: personError,
+      });
       return { error: 'No profile found for your account.' };
     }
 
