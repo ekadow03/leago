@@ -23,6 +23,19 @@ export type OrgPermission =
   | 'manage_tournaments'
   | 'manage_communications';
 
+export const ALL_ORG_PERMISSIONS: { key: OrgPermission; label: string }[] = [
+  { key: 'manage_members', label: 'Manage members' },
+  { key: 'manage_divisions', label: 'Set up seasons, divisions & teams' },
+  { key: 'manage_registrations', label: 'Handle registrations & refunds' },
+  { key: 'manage_compliance', label: 'Review compliance documents' },
+  { key: 'manage_evaluations', label: 'Record player evaluations' },
+  { key: 'manage_draft', label: 'Run the draft' },
+  { key: 'manage_schedule', label: 'Build the schedule' },
+  { key: 'manage_volunteers', label: 'Manage volunteer shifts' },
+  { key: 'manage_tournaments', label: 'Run tournaments' },
+  { key: 'manage_communications', label: 'Post announcements' },
+];
+
 export interface OrgMembership {
   organizationId: string;
   organizationName: string;
