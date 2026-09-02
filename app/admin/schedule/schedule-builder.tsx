@@ -28,6 +28,7 @@ interface Team {
   id: string;
   name: string;
   division_id: string;
+  divisions?: { name: string } | null;
 }
 
 interface EventRow {
@@ -129,6 +130,7 @@ export default function ScheduleBuilder({
   const [startTime, setStartTime] = useState('');
   const [homeTeamId, setHomeTeamId] = useState('');
   const [awayTeamId, setAwayTeamId] = useState('');
+  const [weekNumber, setWeekNumber] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
@@ -145,6 +147,45 @@ export default function ScheduleBuilder({
   const [savingEdit, setSavingEdit] = useState(false);
 
   const divisionsForSeason = divisions.filter((d) => d.season_id === selectedSeasonId);
+
+  // Teams offered in the manual "Add event"/edit-event team pickers —
+  // scoped to a single division when one is known (the top filter for
+  // creating, or the event's own division when editing), since that's
+  // overwhelmingly the common case (e.g. adding one extra makeup/bonus
+  // game between two teams already in view) and a multi-division org
+  // can easily have dozens of teams across the whole organization. With
+  // no single division to scope to (e.g. "All divisions" selected while
+  // creating), every team for the current season is offered instead,
+  // grouped by division so it's still easy to scan.
+  const teamsForSeason = teams.filter((t) => divisionsForSeason.some((d) => d.id === t.division_id));
+
+  function renderTeamOptions(scopeDivisionId: string | null) {
+    if (scopeDivisionId) {
+      return teamsForSeason
+        .filter((t) => t.division_id === scopeDivisionId)
+        .map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.name}
+          </option>
+        ));
+    }
+    const byDivision = new Map<string, Team[]>();
+    for (const t of teamsForSeason) {
+      const label = t.divisions?.name ?? 'Other';
+      const list = byDivision.get(label) ?? [];
+      list.push(t);
+      byDivision.set(label, list);
+    }
+    return Array.from(byDivision.entries()).map(([divisionName, divTeams]) => (
+      <optgroup key={divisionName} label={divisionName}>
+        {divTeams.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.name}
+          </option>
+        ))}
+      </optgroup>
+    ));
+  }
 
   const filteredEvents = events.filter(
     (ev) => ev.season_id === selectedSeasonId && (!selectedDivisionId || ev.division_id === selectedDivisionId)
@@ -177,15 +218,18 @@ export default function ScheduleBuilder({
     setSubmitting(true);
     setError(null);
     try {
+      const weekNumberNum = weekNumber.trim() === '' ? undefined : Number(weekNumber);
       const result = await createEvent({
         organizationId,
         seasonId: selectedSeasonId || undefined,
+        divisionId: selectedDivisionId || undefined,
         type,
         title,
         location: location || undefined,
         startTime: new Date(startTime).toISOString(),
         homeTeamId: type === 'game' ? homeTeamId || undefined : undefined,
         awayTeamId: type === 'game' ? awayTeamId || undefined : undefined,
+        weekNumber: type === 'game' ? weekNumberNum : undefined,
         allowConflicts,
       });
       if ('conflicts' in result) {
@@ -213,7 +257,7 @@ export default function ScheduleBuilder({
           division_id: selectedDivisionId || null,
           home_team_id: homeTeamId || null,
           away_team_id: awayTeamId || null,
-          week_number: null,
+          week_number: type === 'game' ? weekNumberNum ?? null : null,
         },
       ].sort((a, b) => a.start_time.localeCompare(b.start_time)));
       setTitle('');
@@ -221,6 +265,7 @@ export default function ScheduleBuilder({
       setStartTime('');
       setHomeTeamId('');
       setAwayTeamId('');
+      setWeekNumber('');
       setShowForm(false);
     } catch (err: any) {
       setError(err.message);
@@ -585,19 +630,11 @@ export default function ScheduleBuilder({
             <>
               <select value={editHomeTeamId} onChange={(e) => setEditHomeTeamId(e.target.value)} className="form-input">
                 <option value="">Home team…</option>
-                {teams.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
+                {renderTeamOptions(ev.division_id)}
               </select>
               <select value={editAwayTeamId} onChange={(e) => setEditAwayTeamId(e.target.value)} className="form-input">
                 <option value="">Away team…</option>
-                {teams.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
+                {renderTeamOptions(ev.division_id)}
               </select>
             </>
           )}
@@ -725,6 +762,14 @@ export default function ScheduleBuilder({
 
           {showForm && (
             <form onSubmit={handleCreate} className="form-card" style={{ marginBottom: 24 }}>
+              {type === 'game' && (
+                <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -4, marginBottom: 12 }}>
+                  Use this for a one-off game the season generator wouldn&apos;t create on its own — for example,
+                  an extra 3rd game for two specific teams in one week to help a division catch up before the
+                  season&apos;s end date if the standard round-by-round pattern couldn&apos;t fit every team&apos;s
+                  full game count.
+                </p>
+              )}
               <select value={type} onChange={(e) => setType(e.target.value as any)} className="form-input">
                 {EVENT_TYPES.map((t) => (
                   <option key={t.value} value={t.value}>
@@ -746,20 +791,24 @@ export default function ScheduleBuilder({
                 <>
                   <select value={homeTeamId} onChange={(e) => setHomeTeamId(e.target.value)} className="form-input">
                     <option value="">Home team…</option>
-                    {teams.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
-                    ))}
+                    {renderTeamOptions(selectedDivisionId || null)}
                   </select>
                   <select value={awayTeamId} onChange={(e) => setAwayTeamId(e.target.value)} className="form-input">
                     <option value="">Away team…</option>
-                    {teams.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
-                    ))}
+                    {renderTeamOptions(selectedDivisionId || null)}
                   </select>
+                  <input
+                    type="number"
+                    value={weekNumber}
+                    onChange={(e) => setWeekNumber(e.target.value)}
+                    className="form-input"
+                    placeholder="Round/week number (optional)"
+                    style={{ maxWidth: 220 }}
+                  />
+                  <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -8, marginBottom: 12 }}>
+                    Groups this game with that week&apos;s others on this page — match whatever round number is
+                    already showing for the week you want it under, or leave blank to file it as Unscheduled.
+                  </p>
                 </>
               )}
 

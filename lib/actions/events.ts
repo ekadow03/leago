@@ -30,6 +30,12 @@ interface CreateEventInput {
   homeTeamId?: string;
   awayTeamId?: string;
   notes?: string;
+  // Display label only (see the week_number comment on migration 0014)
+  // — lets a manually-added event (e.g. a bonus extra game for two
+  // teams to help a division catch up before the season ends) show up
+  // grouped under the right week on the Schedule page instead of always
+  // landing in "Unscheduled."
+  weekNumber?: number;
   // Set after the caller has shown the user the conflicts from a first
   // call (see the { conflicts } branch below) and they chose to proceed
   // anyway — e.g. a co-coach genuinely covering two teams at once.
@@ -78,6 +84,7 @@ export async function createEvent(input: CreateEventInput): Promise<CreateEventR
         home_team_id: input.homeTeamId ?? null,
         away_team_id: input.awayTeamId ?? null,
         notes: input.notes ?? null,
+        week_number: input.weekNumber ?? null,
         status: 'draft',
       })
       .select('id')
