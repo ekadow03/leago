@@ -47,7 +47,7 @@ export default async function VolunteerPage() {
   }
 
   const org = memberships[0];
-  const isAdmin = org.roles.includes('admin');
+  const isAdmin = org.roles.includes('admin') || org.permissions.includes('manage_volunteers');
 
   const { data: events } = await supabase
     .from('events')

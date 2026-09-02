@@ -3,7 +3,7 @@
 // lib/actions/league-hub.ts
 
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireOrgAdmin } from '@/lib/org-context';
+import { requireOrgPermission } from '@/lib/org-context';
 
 interface UpdateProfileInput {
   organizationId: string;
@@ -13,9 +13,9 @@ interface UpdateProfileInput {
 }
 
 export async function updateOrgProfile(input: UpdateProfileInput): Promise<void> {
-  const isAdmin = await requireOrgAdmin(input.organizationId);
-  if (!isAdmin) {
-    throw new Error('Only an organization admin can update the league profile.');
+  const authorized = await requireOrgPermission(input.organizationId, 'manage_communications');
+  if (!authorized) {
+    throw new Error('You do not have permission to update the league profile.');
   }
 
   const admin = createAdminClient();
@@ -38,9 +38,9 @@ export async function createAnnouncement(
   title: string,
   body: string
 ): Promise<{ id: string }> {
-  const isAdmin = await requireOrgAdmin(organizationId);
-  if (!isAdmin) {
-    throw new Error('Only an organization admin can post announcements.');
+  const authorized = await requireOrgPermission(organizationId, 'manage_communications');
+  if (!authorized) {
+    throw new Error('You do not have permission to post announcements.');
   }
 
   const admin = createAdminClient();
@@ -62,9 +62,9 @@ export async function setAnnouncementStatus(
   announcementId: string,
   status: 'draft' | 'published'
 ): Promise<void> {
-  const isAdmin = await requireOrgAdmin(organizationId);
-  if (!isAdmin) {
-    throw new Error('Only an organization admin can change announcement status.');
+  const authorized = await requireOrgPermission(organizationId, 'manage_communications');
+  if (!authorized) {
+    throw new Error('You do not have permission to change announcement status.');
   }
 
   const admin = createAdminClient();
@@ -76,9 +76,9 @@ export async function setAnnouncementStatus(
 }
 
 export async function deleteAnnouncement(organizationId: string, announcementId: string): Promise<void> {
-  const isAdmin = await requireOrgAdmin(organizationId);
-  if (!isAdmin) {
-    throw new Error('Only an organization admin can delete announcements.');
+  const authorized = await requireOrgPermission(organizationId, 'manage_communications');
+  if (!authorized) {
+    throw new Error('You do not have permission to delete announcements.');
   }
 
   const admin = createAdminClient();

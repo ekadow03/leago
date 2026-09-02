@@ -17,7 +17,7 @@
 // try/catch — see the comment in lib/actions/onboarding.ts for why.
 
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireOrgAdmin } from '@/lib/org-context';
+import { requireOrgPermission } from '@/lib/org-context';
 
 type BulkCreateTeamsResult = { teams: { id: string; name: string }[]; skipped: string[] } | { error: string };
 
@@ -27,9 +27,9 @@ export async function bulkCreateTeams(
   teamNames: string[]
 ): Promise<BulkCreateTeamsResult> {
   try {
-    const isAdmin = await requireOrgAdmin(organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can import teams.' };
+    const authorized = await requireOrgPermission(organizationId, 'manage_divisions');
+    if (!authorized) {
+      return { error: 'You do not have permission to import teams.' };
     }
 
     const cleaned = teamNames.map((n) => n.trim()).filter((n) => n.length > 0);
@@ -40,7 +40,7 @@ export async function bulkCreateTeams(
 
     const admin = createAdminClient();
 
-    // Defense in depth: requireOrgAdmin only checked the caller-supplied
+    // Defense in depth: requireOrgPermission only checked the caller-supplied
     // organizationId, which the client controls — confirm the division
     // being written to actually belongs to that org before inserting,
     // since the admin client bypasses RLS.

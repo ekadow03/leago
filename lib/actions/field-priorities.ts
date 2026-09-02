@@ -11,7 +11,7 @@
 // try/catch — see the comment in lib/actions/onboarding.ts for why.
 
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireOrgAdmin } from '@/lib/org-context';
+import { requireOrgPermission } from '@/lib/org-context';
 
 type SetFieldPriorityResult = { ok: true } | { error: string };
 
@@ -25,9 +25,9 @@ export async function setFieldPriority(
   priority: number
 ): Promise<SetFieldPriorityResult> {
   try {
-    const isAdmin = await requireOrgAdmin(organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can set field priority.' };
+    const authorized = await requireOrgPermission(organizationId, 'manage_schedule');
+    if (!authorized) {
+      return { error: 'You do not have permission to set field priority.' };
     }
 
     if (!Number.isFinite(priority) || priority < 1) {
@@ -36,7 +36,7 @@ export async function setFieldPriority(
 
     const admin = createAdminClient();
 
-    // Defense in depth: requireOrgAdmin only checked the caller-supplied
+    // Defense in depth: requireOrgPermission only checked the caller-supplied
     // organizationId, which the client controls — confirm the field and
     // division being linked actually belong to that org before writing,
     // since the admin client bypasses RLS.
@@ -88,9 +88,9 @@ export async function removeFieldPriority(
   divisionId: string
 ): Promise<RemoveFieldPriorityResult> {
   try {
-    const isAdmin = await requireOrgAdmin(organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can remove a field priority.' };
+    const authorized = await requireOrgPermission(organizationId, 'manage_schedule');
+    if (!authorized) {
+      return { error: 'You do not have permission to remove a field priority.' };
     }
 
     const admin = createAdminClient();

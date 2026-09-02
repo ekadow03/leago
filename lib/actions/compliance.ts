@@ -3,7 +3,7 @@
 // lib/actions/compliance.ts
 
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireOrgAdmin } from '@/lib/org-context';
+import { requireOrgPermission } from '@/lib/org-context';
 import { createClient } from '@/lib/supabase/server';
 
 export async function reviewComplianceRecord(
@@ -12,9 +12,9 @@ export async function reviewComplianceRecord(
   status: 'verified' | 'rejected',
   notes?: string
 ): Promise<void> {
-  const isAdmin = await requireOrgAdmin(organizationId);
-  if (!isAdmin) {
-    throw new Error('Only an organization admin can review compliance documents.');
+  const authorized = await requireOrgPermission(organizationId, 'manage_compliance');
+  if (!authorized) {
+    throw new Error('You do not have permission to review compliance documents.');
   }
 
   const supabase = await createClient();
@@ -45,9 +45,9 @@ export async function reviewComplianceRecord(
 }
 
 export async function getDocumentSignedUrl(organizationId: string, documentId: string): Promise<string> {
-  const isAdmin = await requireOrgAdmin(organizationId);
-  if (!isAdmin) {
-    throw new Error('Only an organization admin can view compliance documents.');
+  const authorized = await requireOrgPermission(organizationId, 'manage_compliance');
+  if (!authorized) {
+    throw new Error('You do not have permission to view compliance documents.');
   }
 
   const admin = createAdminClient();

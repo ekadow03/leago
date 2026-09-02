@@ -8,7 +8,7 @@
 // unanticipated exception needs catching too, not just the expected ones).
 
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireOrgAdmin } from '@/lib/org-context';
+import { requireOrgPermission } from '@/lib/org-context';
 
 interface CreateDivisionInput {
   organizationId: string;
@@ -23,9 +23,9 @@ type CreateDivisionResult = { id: string } | { error: string };
 
 export async function createDivision(input: CreateDivisionInput): Promise<CreateDivisionResult> {
   try {
-    const isAdmin = await requireOrgAdmin(input.organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can create a division.' };
+    const authorized = await requireOrgPermission(input.organizationId, 'manage_divisions');
+    if (!authorized) {
+      return { error: 'You do not have permission to create a division.' };
     }
 
     if (!input.name.trim()) {
@@ -34,7 +34,7 @@ export async function createDivision(input: CreateDivisionInput): Promise<Create
 
     const admin = createAdminClient();
 
-    // Defense in depth: requireOrgAdmin only checked the caller-supplied
+    // Defense in depth: requireOrgPermission only checked the caller-supplied
     // organizationId, which the client controls — confirm the season being
     // written to actually belongs to that org before inserting, since the
     // admin client bypasses RLS.
@@ -84,9 +84,9 @@ export async function updateDivisionPriority(
   priority: number
 ): Promise<UpdatePriorityResult> {
   try {
-    const isAdmin = await requireOrgAdmin(organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can reorder divisions.' };
+    const authorized = await requireOrgPermission(organizationId, 'manage_divisions');
+    if (!authorized) {
+      return { error: 'You do not have permission to reorder divisions.' };
     }
 
     if (!Number.isFinite(priority)) {

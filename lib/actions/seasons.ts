@@ -8,7 +8,7 @@
 // unanticipated exception needs catching too, not just the expected ones).
 
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireOrgAdmin } from '@/lib/org-context';
+import { requireOrgPermission } from '@/lib/org-context';
 
 interface CreateSeasonInput {
   organizationId: string;
@@ -22,9 +22,9 @@ type CreateSeasonResult = { id: string } | { error: string };
 
 export async function createSeason(input: CreateSeasonInput): Promise<CreateSeasonResult> {
   try {
-    const isAdmin = await requireOrgAdmin(input.organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can create a season.' };
+    const authorized = await requireOrgPermission(input.organizationId, 'manage_divisions');
+    if (!authorized) {
+      return { error: 'You do not have permission to create a season.' };
     }
 
     if (!input.name.trim()) {
@@ -71,9 +71,9 @@ export async function setSeasonArchived(
   archived: boolean
 ): Promise<SetSeasonArchivedResult> {
   try {
-    const isAdmin = await requireOrgAdmin(organizationId);
-    if (!isAdmin) {
-      return { error: `Only an organization admin can ${archived ? 'archive' : 'unarchive'} a season.` };
+    const authorized = await requireOrgPermission(organizationId, 'manage_divisions');
+    if (!authorized) {
+      return { error: `You do not have permission to ${archived ? 'archive' : 'unarchive'} a season.` };
     }
 
     const admin = createAdminClient();
@@ -117,9 +117,9 @@ type DeleteSeasonResult = { ok: true } | { error: string };
  * this is just for cleaning up a season created by mistake. */
 export async function deleteSeason(organizationId: string, seasonId: string): Promise<DeleteSeasonResult> {
   try {
-    const isAdmin = await requireOrgAdmin(organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can delete a season.' };
+    const authorized = await requireOrgPermission(organizationId, 'manage_divisions');
+    if (!authorized) {
+      return { error: 'You do not have permission to delete a season.' };
     }
 
     const admin = createAdminClient();
@@ -184,9 +184,9 @@ export async function updateSeasonAgeCutoff(
   ageCutoffDate: string | null
 ): Promise<UpdateSeasonAgeCutoffResult> {
   try {
-    const isAdmin = await requireOrgAdmin(organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can change the age cutoff date.' };
+    const authorized = await requireOrgPermission(organizationId, 'manage_divisions');
+    if (!authorized) {
+      return { error: 'You do not have permission to change the age cutoff date.' };
     }
 
     const admin = createAdminClient();

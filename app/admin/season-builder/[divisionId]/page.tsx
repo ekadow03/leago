@@ -43,11 +43,11 @@ export default async function SeasonBuilderPage({
   const organizationId = season.organization_id;
 
   const memberships = await getCurrentUserMemberships();
-  const isAdmin = memberships.some(
-    (m) => m.organizationId === organizationId && m.roles.includes('admin')
+  const hasAccess = memberships.some(
+    (m) => m.organizationId === organizationId && (m.roles.includes('admin') || m.permissions.includes('manage_divisions'))
   );
 
-  if (!isAdmin) {
+  if (!hasAccess) {
     return (
       <div className="admin-page">
         <Nav />

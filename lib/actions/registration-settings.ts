@@ -7,7 +7,7 @@
 // throwing — see the comment in lib/actions/onboarding.ts for why.
 
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireOrgAdmin } from '@/lib/org-context';
+import { requireOrgPermission } from '@/lib/org-context';
 
 interface RegistrationSettingsInput {
   organizationId: string;
@@ -27,9 +27,9 @@ type Result = { ok: true } | { error: string };
 
 export async function upsertRegistrationSettings(input: RegistrationSettingsInput): Promise<Result> {
   try {
-    const isAdmin = await requireOrgAdmin(input.organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can edit registration settings.' };
+    const authorized = await requireOrgPermission(input.organizationId, 'manage_registrations');
+    if (!authorized) {
+      return { error: 'You do not have permission to edit registration settings.' };
     }
 
     const admin = createAdminClient();

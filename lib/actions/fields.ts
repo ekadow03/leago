@@ -10,15 +10,15 @@
 // collisions instead of missing them over a casing/spelling mismatch.
 
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireOrgAdmin } from '@/lib/org-context';
+import { requireOrgPermission } from '@/lib/org-context';
 
 type CreateFieldResult = { id: string; name: string } | { error: string };
 
 export async function createField(organizationId: string, name: string): Promise<CreateFieldResult> {
   try {
-    const isAdmin = await requireOrgAdmin(organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can add a field.' };
+    const authorized = await requireOrgPermission(organizationId, 'manage_schedule');
+    if (!authorized) {
+      return { error: 'You do not have permission to add a field.' };
     }
 
     const trimmed = name.trim();
@@ -63,9 +63,9 @@ type DeleteFieldResult = { ok: true } | { error: string };
 
 export async function deleteField(organizationId: string, fieldId: string): Promise<DeleteFieldResult> {
   try {
-    const isAdmin = await requireOrgAdmin(organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can remove a field.' };
+    const authorized = await requireOrgPermission(organizationId, 'manage_schedule');
+    if (!authorized) {
+      return { error: 'You do not have permission to remove a field.' };
     }
 
     const admin = createAdminClient();

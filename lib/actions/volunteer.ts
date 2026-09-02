@@ -4,7 +4,7 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireOrgAdmin } from '@/lib/org-context';
+import { requireOrgPermission } from '@/lib/org-context';
 
 interface CreateShiftInput {
   organizationId: string;
@@ -15,9 +15,9 @@ interface CreateShiftInput {
 }
 
 export async function createVolunteerShift(input: CreateShiftInput): Promise<{ id: string }> {
-  const isAdmin = await requireOrgAdmin(input.organizationId);
-  if (!isAdmin) {
-    throw new Error('Only an organization admin can create volunteer shifts.');
+  const authorized = await requireOrgPermission(input.organizationId, 'manage_volunteers');
+  if (!authorized) {
+    throw new Error('You do not have permission to create volunteer shifts.');
   }
 
   const admin = createAdminClient();

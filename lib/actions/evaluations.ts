@@ -3,7 +3,7 @@
 // lib/actions/evaluations.ts
 
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireOrgAdmin } from '@/lib/org-context';
+import { requireOrgPermission } from '@/lib/org-context';
 import { createClient } from '@/lib/supabase/server';
 
 interface RecordEvaluationInput {
@@ -16,9 +16,9 @@ interface RecordEvaluationInput {
 }
 
 export async function recordEvaluation(input: RecordEvaluationInput): Promise<{ id: string }> {
-  const isAdmin = await requireOrgAdmin(input.organizationId);
-  if (!isAdmin) {
-    throw new Error('Only an organization admin can record evaluations.');
+  const authorized = await requireOrgPermission(input.organizationId, 'manage_evaluations');
+  if (!authorized) {
+    throw new Error('You do not have permission to record evaluations.');
   }
 
   const supabase = await createClient();

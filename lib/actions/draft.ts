@@ -3,7 +3,7 @@
 // lib/actions/draft.ts
 
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireOrgAdmin } from '@/lib/org-context';
+import { requireOrgPermission } from '@/lib/org-context';
 import { createClient } from '@/lib/supabase/server';
 import { getCurrentPick } from '@/lib/draft-logic';
 
@@ -16,9 +16,9 @@ interface StartDraftInput {
 }
 
 export async function startDraftSession(input: StartDraftInput): Promise<{ id: string }> {
-  const isAdmin = await requireOrgAdmin(input.organizationId);
-  if (!isAdmin) {
-    throw new Error('Only an organization admin can start a draft.');
+  const authorized = await requireOrgPermission(input.organizationId, 'manage_draft');
+  if (!authorized) {
+    throw new Error('You do not have permission to start a draft.');
   }
   if (input.teamOrder.length === 0) {
     throw new Error('Draft needs at least one team in the order.');
@@ -64,9 +64,9 @@ export async function makeDraftPick(input: MakePickInput): Promise<{ pickNumber:
     throw new Error('Draft session not found.');
   }
 
-  const isAdmin = await requireOrgAdmin(session.organization_id);
-  if (!isAdmin) {
-    throw new Error('Only an organization admin can make a pick.');
+  const authorized = await requireOrgPermission(session.organization_id, 'manage_draft');
+  if (!authorized) {
+    throw new Error('You do not have permission to make a pick.');
   }
 
   if (session.status !== 'live') {
@@ -146,8 +146,8 @@ export async function undoLastPick(draftSessionId: string): Promise<void> {
 
   if (!session) throw new Error('Draft session not found.');
 
-  const isAdmin = await requireOrgAdmin(session.organization_id);
-  if (!isAdmin) throw new Error('Only an organization admin can undo a pick.');
+  const authorized = await requireOrgPermission(session.organization_id, 'manage_draft');
+  if (!authorized) throw new Error('You do not have permission to undo a pick.');
 
   if (session.current_pick_index === 0) {
     throw new Error('No picks to undo.');

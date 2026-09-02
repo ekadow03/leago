@@ -10,7 +10,7 @@
 // try/catch — see the comment in lib/actions/onboarding.ts for why.
 
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireOrgAdmin } from '@/lib/org-context';
+import { requireOrgPermission } from '@/lib/org-context';
 
 interface CreateBlackoutInput {
   organizationId: string;
@@ -28,9 +28,9 @@ type CreateBlackoutResult = { id: string } | { error: string };
 
 export async function createBlackout(input: CreateBlackoutInput): Promise<CreateBlackoutResult> {
   try {
-    const isAdmin = await requireOrgAdmin(input.organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can add a blackout.' };
+    const authorized = await requireOrgPermission(input.organizationId, 'manage_schedule');
+    if (!authorized) {
+      return { error: 'You do not have permission to add a blackout.' };
     }
 
     if (input.kind === 'date' && !input.blackoutDate) {
@@ -48,7 +48,7 @@ export async function createBlackout(input: CreateBlackoutInput): Promise<Create
 
     const admin = createAdminClient();
 
-    // Defense in depth: requireOrgAdmin only checked the caller-supplied
+    // Defense in depth: requireOrgPermission only checked the caller-supplied
     // organizationId, which the client controls — confirm the season
     // being written to actually belongs to that org before inserting,
     // since the admin client bypasses RLS.
@@ -94,9 +94,9 @@ type DeleteBlackoutResult = { ok: true } | { error: string };
 
 export async function deleteBlackout(organizationId: string, blackoutId: string): Promise<DeleteBlackoutResult> {
   try {
-    const isAdmin = await requireOrgAdmin(organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can remove a blackout.' };
+    const authorized = await requireOrgPermission(organizationId, 'manage_schedule');
+    if (!authorized) {
+      return { error: 'You do not have permission to remove a blackout.' };
     }
 
     const admin = createAdminClient();

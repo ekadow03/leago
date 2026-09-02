@@ -9,7 +9,7 @@
 // not just the expected ones).
 
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireOrgAdmin } from '@/lib/org-context';
+import { requireOrgPermission } from '@/lib/org-context';
 
 interface CreateEventInput {
   organizationId: string;
@@ -33,9 +33,9 @@ function unexpectedError(err: unknown): { error: string } {
 
 export async function createEvent(input: CreateEventInput): Promise<CreateEventResult> {
   try {
-    const isAdmin = await requireOrgAdmin(input.organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can create schedule events.' };
+    const authorized = await requireOrgPermission(input.organizationId, 'manage_schedule');
+    if (!authorized) {
+      return { error: 'You do not have permission to create schedule events.' };
     }
 
     const admin = createAdminClient();
@@ -77,9 +77,9 @@ export async function setEventStatus(
   status: 'draft' | 'published' | 'canceled'
 ): Promise<SetEventStatusResult> {
   try {
-    const isAdmin = await requireOrgAdmin(organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can change event status.' };
+    const authorized = await requireOrgPermission(organizationId, 'manage_schedule');
+    if (!authorized) {
+      return { error: 'You do not have permission to change event status.' };
     }
 
     const admin = createAdminClient();
@@ -99,9 +99,9 @@ type PublishAllResult = { count: number } | { error: string };
 
 export async function publishAllDraftEvents(organizationId: string, seasonId: string): Promise<PublishAllResult> {
   try {
-    const isAdmin = await requireOrgAdmin(organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can publish the schedule.' };
+    const authorized = await requireOrgPermission(organizationId, 'manage_schedule');
+    if (!authorized) {
+      return { error: 'You do not have permission to publish the schedule.' };
     }
 
     const admin = createAdminClient();
@@ -127,9 +127,9 @@ type DeleteEventResult = { ok: true } | { error: string };
 
 export async function deleteEvent(organizationId: string, eventId: string): Promise<DeleteEventResult> {
   try {
-    const isAdmin = await requireOrgAdmin(organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can delete events.' };
+    const authorized = await requireOrgPermission(organizationId, 'manage_schedule');
+    if (!authorized) {
+      return { error: 'You do not have permission to delete events.' };
     }
 
     const admin = createAdminClient();
@@ -154,9 +154,9 @@ type DeleteEventsResult = { count: number } | { error: string };
  * events by passing arbitrary ids. */
 export async function deleteEvents(organizationId: string, eventIds: string[]): Promise<DeleteEventsResult> {
   try {
-    const isAdmin = await requireOrgAdmin(organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can delete events.' };
+    const authorized = await requireOrgPermission(organizationId, 'manage_schedule');
+    if (!authorized) {
+      return { error: 'You do not have permission to delete events.' };
     }
 
     if (eventIds.length === 0) {
@@ -201,9 +201,9 @@ type UpdateEventResult = { ok: true } | { error: string };
  * changed. */
 export async function updateEvent(input: UpdateEventInput): Promise<UpdateEventResult> {
   try {
-    const isAdmin = await requireOrgAdmin(input.organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can edit events.' };
+    const authorized = await requireOrgPermission(input.organizationId, 'manage_schedule');
+    if (!authorized) {
+      return { error: 'You do not have permission to edit events.' };
     }
 
     const patch: Record<string, unknown> = {};

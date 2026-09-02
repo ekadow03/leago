@@ -3,7 +3,7 @@
 // lib/actions/tournaments.ts
 
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireOrgAdmin } from '@/lib/org-context';
+import { requireOrgPermission } from '@/lib/org-context';
 import { stripe } from '@/lib/stripe';
 
 interface CreateTournamentInput {
@@ -18,8 +18,8 @@ interface CreateTournamentInput {
 }
 
 export async function createTournament(input: CreateTournamentInput): Promise<{ id: string }> {
-  const isAdmin = await requireOrgAdmin(input.organizationId);
-  if (!isAdmin) throw new Error('Only an organization admin can create a tournament.');
+  const authorized = await requireOrgPermission(input.organizationId, 'manage_tournaments');
+  if (!authorized) throw new Error('You do not have permission to create a tournament.');
 
   const admin = createAdminClient();
   const { data, error } = await admin
@@ -46,8 +46,8 @@ export async function setTournamentStatus(
   tournamentId: string,
   status: 'draft' | 'registration_open' | 'registration_closed' | 'in_progress' | 'complete'
 ): Promise<void> {
-  const isAdmin = await requireOrgAdmin(organizationId);
-  if (!isAdmin) throw new Error('Only an organization admin can change tournament status.');
+  const authorized = await requireOrgPermission(organizationId, 'manage_tournaments');
+  if (!authorized) throw new Error('You do not have permission to change tournament status.');
 
   const admin = createAdminClient();
   const { error } = await admin.from('tournaments').update({ status }).eq('id', tournamentId);
@@ -149,8 +149,8 @@ function shuffle<T>(arr: T[]): T[] {
 }
 
 export async function generateBracket(organizationId: string, tournamentId: string): Promise<void> {
-  const isAdmin = await requireOrgAdmin(organizationId);
-  if (!isAdmin) throw new Error('Only an organization admin can generate the bracket.');
+  const authorized = await requireOrgPermission(organizationId, 'manage_tournaments');
+  if (!authorized) throw new Error('You do not have permission to generate the bracket.');
 
   const admin = createAdminClient();
 
@@ -253,8 +253,8 @@ export async function recordMatchResult(
   scoreTeam1: number,
   scoreTeam2: number
 ): Promise<void> {
-  const isAdmin = await requireOrgAdmin(organizationId);
-  if (!isAdmin) throw new Error('Only an organization admin can record match results.');
+  const authorized = await requireOrgPermission(organizationId, 'manage_tournaments');
+  if (!authorized) throw new Error('You do not have permission to record match results.');
 
   const admin = createAdminClient();
 

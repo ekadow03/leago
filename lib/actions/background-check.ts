@@ -5,7 +5,7 @@
 // ⚠️ SCAFFOLD ONLY — NOT LIVE ⚠️
 
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireOrgAdmin } from '@/lib/org-context';
+import { requireOrgPermission } from '@/lib/org-context';
 
 interface RequestBackgroundCheckInput {
   organizationId: string;
@@ -14,9 +14,9 @@ interface RequestBackgroundCheckInput {
 }
 
 export async function requestBackgroundCheck(input: RequestBackgroundCheckInput): Promise<void> {
-  const isAdmin = await requireOrgAdmin(input.organizationId);
-  if (!isAdmin) {
-    throw new Error('Only an organization admin can request a background check.');
+  const authorized = await requireOrgPermission(input.organizationId, 'manage_compliance');
+  if (!authorized) {
+    throw new Error('You do not have permission to request a background check.');
   }
 
   const admin = createAdminClient();

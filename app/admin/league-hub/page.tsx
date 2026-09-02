@@ -18,12 +18,15 @@ export default async function AdminLeagueHubPage() {
   }
 
   const memberships = await getCurrentUserMemberships();
-  const adminOrgs = memberships.filter((m) => m.roles.includes('admin'));
+  const adminOrgs = memberships.filter(
+    (m) => m.roles.includes('admin') || m.permissions.includes('manage_communications')
+  );
 
   if (adminOrgs.length === 0) {
     return (
       <div className="admin-page">
         <Nav />
+        <AdminNav active="/admin/league-hub" />
         <div className="empty-state" style={{ marginTop: 80 }}>
           <p>You're not an admin of any organization.</p>
         </div>

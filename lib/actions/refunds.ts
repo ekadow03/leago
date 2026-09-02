@@ -4,7 +4,7 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireOrgAdmin } from '@/lib/org-context';
+import { requireOrgPermission } from '@/lib/org-context';
 import { stripe } from '@/lib/stripe';
 
 interface IssueRefundInput {
@@ -35,9 +35,9 @@ export async function issueRefund(input: IssueRefundInput): Promise<{ refundId: 
     throw new Error('Registration not found.');
   }
 
-  const isAdmin = await requireOrgAdmin(registration.organization_id);
-  if (!isAdmin) {
-    throw new Error('Only an organization admin can issue refunds.');
+  const authorized = await requireOrgPermission(registration.organization_id, 'manage_registrations');
+  if (!authorized) {
+    throw new Error('You do not have permission to issue refunds.');
   }
 
   if (!registration.stripe_payment_intent_id) {

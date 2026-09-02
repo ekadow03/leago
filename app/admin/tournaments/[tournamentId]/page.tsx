@@ -40,11 +40,11 @@ export default async function TournamentAdminPage({
   }
 
   const memberships = await getCurrentUserMemberships();
-  const isAdmin = memberships.some(
-    (m) => m.organizationId === tournament.organization_id && m.roles.includes('admin')
+  const hasAccess = memberships.some(
+    (m) => m.organizationId === tournament.organization_id && (m.roles.includes('admin') || m.permissions.includes('manage_tournaments'))
   );
 
-  if (!isAdmin) {
+  if (!hasAccess) {
     return (
       <div className="admin-page">
         <Nav />

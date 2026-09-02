@@ -42,7 +42,10 @@ export default async function GetStartedPage() {
   // also the link used from the homepage nav, which doesn't know whether
   // the visitor is brand new or a returning admin.
   const memberships = await getCurrentUserMemberships();
-  const adminOrgs = memberships.filter((m) => m.roles.includes('admin'));
+  // A board member/manager granted a delegated permission (see
+  // 0022_delegated_permissions.sql) also already belongs to a league —
+  // route them back to it too, not just full admins.
+  const adminOrgs = memberships.filter((m) => m.roles.includes('admin') || m.permissions.length > 0);
 
   if (adminOrgs.length > 0) {
     return (

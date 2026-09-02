@@ -28,7 +28,7 @@
 // why it isn't a real calendar week.
 
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireOrgAdmin } from '@/lib/org-context';
+import { requireOrgPermission } from '@/lib/org-context';
 
 interface DaySlotInput {
   dayOfWeek: number; // 0 = Sunday .. 6 = Saturday
@@ -188,9 +188,9 @@ type GenerateScheduleResult =
 
 export async function generateSeasonSchedule(input: GenerateScheduleInput): Promise<GenerateScheduleResult> {
   try {
-    const isAdmin = await requireOrgAdmin(input.organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can generate a schedule.' };
+    const authorized = await requireOrgPermission(input.organizationId, 'manage_schedule');
+    if (!authorized) {
+      return { error: 'You do not have permission to generate a schedule.' };
     }
 
     if (input.daySlots.length === 0) {

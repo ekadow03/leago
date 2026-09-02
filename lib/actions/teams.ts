@@ -8,7 +8,7 @@
 // see the comment in lib/actions/onboarding.ts for why.
 
 import { createAdminClient } from '@/lib/supabase/admin';
-import { requireOrgAdmin } from '@/lib/org-context';
+import { requireOrgPermission } from '@/lib/org-context';
 
 type CreateTeamResult = { id: string; name: string } | { error: string };
 
@@ -18,9 +18,9 @@ export async function createTeam(
   name: string
 ): Promise<CreateTeamResult> {
   try {
-    const isAdmin = await requireOrgAdmin(organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can add a team.' };
+    const authorized = await requireOrgPermission(organizationId, 'manage_divisions');
+    if (!authorized) {
+      return { error: 'You do not have permission to add a team.' };
     }
 
     const trimmed = name.trim();
@@ -70,9 +70,9 @@ type DeleteTeamResult = { ok: true } | { error: string };
  * reassigning or regenerating. */
 export async function deleteTeam(organizationId: string, teamId: string): Promise<DeleteTeamResult> {
   try {
-    const isAdmin = await requireOrgAdmin(organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can remove a team.' };
+    const authorized = await requireOrgPermission(organizationId, 'manage_divisions');
+    if (!authorized) {
+      return { error: 'You do not have permission to remove a team.' };
     }
 
     const admin = createAdminClient();
@@ -115,9 +115,9 @@ export async function deleteAllTeamsInDivision(
   divisionId: string
 ): Promise<DeleteAllTeamsResult> {
   try {
-    const isAdmin = await requireOrgAdmin(organizationId);
-    if (!isAdmin) {
-      return { error: 'Only an organization admin can remove teams.' };
+    const authorized = await requireOrgPermission(organizationId, 'manage_divisions');
+    if (!authorized) {
+      return { error: 'You do not have permission to remove teams.' };
     }
 
     const admin = createAdminClient();
