@@ -133,6 +133,7 @@ export default function ScheduleBuilder({
   const [weekNumber, setWeekNumber] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [showBalanceReport, setShowBalanceReport] = useState(false);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
@@ -206,6 +207,84 @@ export default function ScheduleBuilder({
     if (b === null) return -1;
     return a - b;
   });
+
+  // Quick balance check: is every team getting a roughly even split of
+  // home vs. away games, and is each team facing every other team in its
+  // division a similar number of times? Some drift is legitimate (an odd
+  // number of teams leaves someone with an extra home or away game; a
+  // manually-added bonus game — see the "+ Add event" hint below — adds
+  // one extra matchup on purpose) so this is presented as something to
+  // eyeball, not a hard error.
+  interface BalanceRow {
+    teamId: string;
+    teamName: string;
+    home: number;
+    away: number;
+  }
+  interface MatchupCount {
+    teamAId: string;
+    teamAName: string;
+    teamBId: string;
+    teamBName: string;
+    count: number;
+  }
+  interface DivisionBalance {
+    divisionId: string;
+    divisionName: string;
+    rows: BalanceRow[];
+    matchups: MatchupCount[];
+    matchupMedian: number;
+  }
+
+  const balanceGameEvents = filteredEvents.filter(
+    (ev) => ev.type === 'game' && ev.status !== 'canceled' && ev.home_team_id && ev.away_team_id
+  );
+  const balanceDivisionIds = selectedDivisionId ? [selectedDivisionId] : divisionsForSeason.map((d) => d.id);
+
+  const divisionBalances: DivisionBalance[] = balanceDivisionIds
+    .map((divId) => {
+      const division = divisions.find((d) => d.id === divId);
+      const divTeams = teams.filter((t) => t.division_id === divId).sort((a, b) => a.name.localeCompare(b.name));
+      const homeCounts = new Map<string, number>();
+      const awayCounts = new Map<string, number>();
+      const pairCounts = new Map<string, number>();
+      for (const ev of balanceGameEvents) {
+        if (ev.division_id !== divId) continue;
+        homeCounts.set(ev.home_team_id!, (homeCounts.get(ev.home_team_id!) ?? 0) + 1);
+        awayCounts.set(ev.away_team_id!, (awayCounts.get(ev.away_team_id!) ?? 0) + 1);
+        const pairKey = [ev.home_team_id!, ev.away_team_id!].sort().join('|');
+        pairCounts.set(pairKey, (pairCounts.get(pairKey) ?? 0) + 1);
+      }
+      const rows: BalanceRow[] = divTeams.map((t) => ({
+        teamId: t.id,
+        teamName: t.name,
+        home: homeCounts.get(t.id) ?? 0,
+        away: awayCounts.get(t.id) ?? 0,
+      }));
+      const matchups: MatchupCount[] = [];
+      for (let i = 0; i < divTeams.length; i++) {
+        for (let j = i + 1; j < divTeams.length; j++) {
+          const pairKey = [divTeams[i].id, divTeams[j].id].sort().join('|');
+          matchups.push({
+            teamAId: divTeams[i].id,
+            teamAName: divTeams[i].name,
+            teamBId: divTeams[j].id,
+            teamBName: divTeams[j].name,
+            count: pairCounts.get(pairKey) ?? 0,
+          });
+        }
+      }
+      const sortedCounts = matchups.map((m) => m.count).sort((a, b) => a - b);
+      const matchupMedian = sortedCounts.length > 0 ? sortedCounts[Math.floor(sortedCounts.length / 2)] : 0;
+      return {
+        divisionId: divId,
+        divisionName: division?.name ?? 'Unknown division',
+        rows,
+        matchups,
+        matchupMedian,
+      };
+    })
+    .filter((db) => db.rows.length > 0);
 
   function handleSeasonChange(seasonId: string) {
     setSelectedSeasonId(seasonId);
@@ -750,7 +829,10 @@ export default function ScheduleBuilder({
             <button onClick={handleExportSportConnect} className="btn-small">
               Export for SportConnect
             </button>
-            <button onClick={() => setShowForm((s) => !s)} className="btn-small" style={{ marginLeft: 'auto' }}>
+            <button onClick={() => setShowBalanceReport((s) => !s)} className="btn-small" style={{ marginLeft: 'auto' }}>
+              {showBalanceReport ? 'Hide balance report' : 'Balance report'}
+            </button>
+            <button onClick={() => setShowForm((s) => !s)} className="btn-small">
               {showForm ? 'Cancel' : '+ Add event'}
             </button>
           </div>
@@ -759,6 +841,96 @@ export default function ScheduleBuilder({
             picked here), formatted for that platform&apos;s bulk schedule import. Team names must already match
             the roster already set up on that platform exactly.
           </p>
+
+          {showBalanceReport && (
+            <div className="form-card" style={{ marginBottom: 24 }}>
+              <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -4, marginBottom: 16 }}>
+                Home/away and matchup counts for the games currently shown above (draft and published, excluding
+                canceled). Some drift is normal — an odd number of teams leaves someone with an extra home or away
+                game, and a manually-added bonus game adds one extra matchup on purpose — so treat this as
+                something to eyeball, not a hard rule.
+              </p>
+              {divisionBalances.length === 0 && <p style={{ color: 'var(--gray)' }}>No games to check yet.</p>}
+              {divisionBalances.map((db) => {
+                const homeAwayFlags = db.rows.filter((r) => Math.abs(r.home - r.away) >= 2);
+                const matchupFlags = db.matchups.filter((m) => Math.abs(m.count - db.matchupMedian) >= 1);
+                const isClean = homeAwayFlags.length === 0 && matchupFlags.length === 0;
+                return (
+                  <div key={db.divisionId} style={{ marginBottom: 28 }}>
+                    <h3 style={{ fontSize: 14, marginBottom: 4 }}>{db.divisionName}</h3>
+                    <p style={{ fontSize: 12, color: isClean ? 'var(--gray)' : '#B23A2E', marginBottom: 10 }}>
+                      {isClean
+                        ? 'Looks balanced — every team is within 1 game of even home/away, and matchup counts are even.'
+                        : [
+                            homeAwayFlags.length > 0
+                              ? `${homeAwayFlags.length} team(s) with a home/away gap of 2 or more.`
+                              : null,
+                            matchupFlags.length > 0
+                              ? `${matchupFlags.length} matchup(s) off this division's typical count (${db.matchupMedian}).`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                    </p>
+
+                    <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 14 }}>
+                      <thead>
+                        <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border)' }}>
+                          <th style={{ padding: '6px 8px' }}>Team</th>
+                          <th style={{ padding: '6px 8px' }}>Home</th>
+                          <th style={{ padding: '6px 8px' }}>Away</th>
+                          <th style={{ padding: '6px 8px' }}>Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {db.rows.map((r) => {
+                          const flagged = Math.abs(r.home - r.away) >= 2;
+                          return (
+                            <tr
+                              key={r.teamId}
+                              style={{ borderBottom: '1px solid var(--border)', background: flagged ? '#FBEAE8' : undefined }}
+                            >
+                              <td style={{ padding: '6px 8px' }}>{r.teamName}</td>
+                              <td style={{ padding: '6px 8px', color: flagged ? '#B23A2E' : undefined }}>{r.home}</td>
+                              <td style={{ padding: '6px 8px', color: flagged ? '#B23A2E' : undefined }}>{r.away}</td>
+                              <td style={{ padding: '6px 8px' }}>{r.home + r.away}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+
+                    {db.matchups.length > 0 && (
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border)' }}>
+                            <th style={{ padding: '6px 8px' }}>Matchup</th>
+                            <th style={{ padding: '6px 8px' }}>Games</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {db.matchups.map((m) => {
+                            const flagged = Math.abs(m.count - db.matchupMedian) >= 1;
+                            return (
+                              <tr
+                                key={`${m.teamAId}-${m.teamBId}`}
+                                style={{ borderBottom: '1px solid var(--border)', background: flagged ? '#FBEAE8' : undefined }}
+                              >
+                                <td style={{ padding: '6px 8px' }}>
+                                  {m.teamAName} vs {m.teamBName}
+                                </td>
+                                <td style={{ padding: '6px 8px', color: flagged ? '#B23A2E' : undefined }}>{m.count}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {showForm && (
             <form onSubmit={handleCreate} className="form-card" style={{ marginBottom: 24 }}>
