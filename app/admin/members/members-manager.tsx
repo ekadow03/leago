@@ -14,7 +14,7 @@ import {
   setMemberPermissions,
   type OrgMemberRow,
 } from '@/lib/actions/members';
-import { ALL_ORG_PERMISSIONS, type OrgPermission, type OrgRole } from '@/lib/org-context';
+import { ALL_ORG_PERMISSIONS, type OrgPermission, type OrgRole } from '@/lib/org-permissions';
 
 const ROLE_OPTIONS: OrgRole[] = ['admin', 'coach', 'volunteer', 'parent', 'player'];
 

@@ -1,40 +1,20 @@
 // lib/org-context.ts
 // Central place to resolve "who is this user, and what orgs/roles/
 // permissions do they have" for use across Server Actions and pages.
+//
+// OrgRole, OrgPermission, and ALL_ORG_PERMISSIONS live in
+// lib/org-permissions.ts (a client-safe module with no next/headers
+// dependency) and are re-exported here for the many existing server-side
+// imports from '@/lib/org-context'. Client Components must import those
+// three directly from '@/lib/org-permissions' instead of from this file —
+// this file pulls in lib/supabase/server (next/headers), which Turbopack
+// refuses to bundle into a client chunk.
 
 import { createClient } from '@/lib/supabase/server';
+import { ALL_ORG_PERMISSIONS, type OrgPermission, type OrgRole } from '@/lib/org-permissions';
 
-export type OrgRole = 'player' | 'parent' | 'coach' | 'volunteer' | 'admin';
-
-// Mirrors the check constraint on organization_permissions.permission in
-// 0022_delegated_permissions.sql — keep these two lists in sync. An org
-// admin implicitly has every permission (see requireOrgPermission below
-// and that migration's has_org_permission() SQL function) and never
-// needs a row in organization_permissions.
-export type OrgPermission =
-  | 'manage_members'
-  | 'manage_divisions'
-  | 'manage_registrations'
-  | 'manage_compliance'
-  | 'manage_evaluations'
-  | 'manage_draft'
-  | 'manage_schedule'
-  | 'manage_volunteers'
-  | 'manage_tournaments'
-  | 'manage_communications';
-
-export const ALL_ORG_PERMISSIONS: { key: OrgPermission; label: string }[] = [
-  { key: 'manage_members', label: 'Manage members' },
-  { key: 'manage_divisions', label: 'Set up seasons, divisions & teams' },
-  { key: 'manage_registrations', label: 'Handle registrations & refunds' },
-  { key: 'manage_compliance', label: 'Review compliance documents' },
-  { key: 'manage_evaluations', label: 'Record player evaluations' },
-  { key: 'manage_draft', label: 'Run the draft' },
-  { key: 'manage_schedule', label: 'Build the schedule' },
-  { key: 'manage_volunteers', label: 'Manage volunteer shifts' },
-  { key: 'manage_tournaments', label: 'Run tournaments' },
-  { key: 'manage_communications', label: 'Post announcements' },
-];
+export { ALL_ORG_PERMISSIONS };
+export type { OrgPermission, OrgRole };
 
 export interface OrgMembership {
   organizationId: string;
