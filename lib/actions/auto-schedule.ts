@@ -572,6 +572,15 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     const gamesPlayed = new Map<string, number>(teamIds.map((id) => [id, 0]));
     const targetReachedFor = () => teamIds.every((id) => (gamesPlayed.get(id) ?? 0) >= input.gamesPerTeam);
 
+    // How many times each team has been HOME so far — used to decide
+    // which side of a matchup is home at the moment it's actually
+    // placed (see below), not by fixed pair order. buildRoundRobinCycle
+    // always puts the same "anchor" team first in its own round-0 slot,
+    // so using pair order directly as home/away would give that one
+    // team home almost every time all season instead of a roughly even
+    // split.
+    const homeCount = new Map<string, number>(teamIds.map((id) => [id, 0]));
+
     // Tops the queue up with the next round-robin cycle whenever it runs
     // dry, unless every team has already reached its target — this is
     // what makes "the round is still accounted for, just try the next
@@ -628,12 +637,14 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
         let chosenEndMs = 0;
 
         for (let qi = 0; qi < pendingQueue.length; qi++) {
-          const [homeId, awayId] = pendingQueue[qi];
-          if (usedTeamsToday.has(homeId) || usedTeamsToday.has(awayId)) continue;
+          // Not home/away yet — that's decided below, once we know a
+          // slot actually works for this pair.
+          const [teamX, teamY] = pendingQueue[qi];
+          if (usedTeamsToday.has(teamX) || usedTeamsToday.has(teamY)) continue;
 
           if (
             maxGamesPerWeek !== null &&
-            (weeklyCountFor(homeId, weekKey) >= maxGamesPerWeek || weeklyCountFor(awayId, weekKey) >= maxGamesPerWeek)
+            (weeklyCountFor(teamX, weekKey) >= maxGamesPerWeek || weeklyCountFor(teamY, weekKey) >= maxGamesPerWeek)
           ) {
             weeklyCapDeferred++;
             continue;
@@ -643,7 +654,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
           const startMs = new Date(isoTime).getTime();
           const endMs = startMs + input.gameDurationMinutes * 60000;
 
-          if (coachConflictAt(homeId, awayId, startMs, endMs)) {
+          if (coachConflictAt(teamX, teamY, startMs, endMs)) {
             coachConflictsAvoided++;
             continue;
           }
@@ -657,10 +668,19 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
 
         if (chosenIdx === -1) continue; // no eligible matchup fits this slot today — leave it unused
 
-        const [homeId, awayId] = pendingQueue[chosenIdx];
+        const [teamX, teamY] = pendingQueue[chosenIdx];
         pendingQueue.splice(chosenIdx, 1);
-        usedTeamsToday.add(homeId);
-        usedTeamsToday.add(awayId);
+        usedTeamsToday.add(teamX);
+        usedTeamsToday.add(teamY);
+
+        // Whichever side currently has FEWER home games gets to be home
+        // this time — a simple greedy balance that keeps every team's
+        // home/away split close to even over the course of the season,
+        // and naturally alternates home/away on repeat meetings between
+        // the same two teams across cycles.
+        const homeId = (homeCount.get(teamX) ?? 0) <= (homeCount.get(teamY) ?? 0) ? teamX : teamY;
+        const awayId = homeId === teamX ? teamY : teamX;
+        homeCount.set(homeId, (homeCount.get(homeId) ?? 0) + 1);
 
         eventsToInsert.push({
           organization_id: input.organizationId,
@@ -691,6 +711,42 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
           recordWeeklyGame(awayId, weekKey);
         }
       }
+    }
+
+    // The date range can run out at the exact moment the queue happens
+    // to be empty (whatever was queued all got placed) while some teams
+    // are STILL short of gamesPerTeam — the next round that would cover
+    // that gap was simply never generated, because refillQueueIfEmpty()
+    // only runs while there's still a date left to try placing into. Top
+    // the queue back up here, purely so Step 4b below can actually see
+    // and report what's still needed — nothing more gets scheduled from
+    // this point on.
+    //
+    // Stop as soon as every team's ALREADY-PLACED games plus its
+    // games currently sitting in the queue covers its target — NOT
+    // targetReachedFor(), which only tracks placed games and would
+    // never become true here since nothing more actually gets placed
+    // after this point. Using that would enqueue whole extra cycles
+    // forever (bounded only by a safety cap), producing a wildly
+    // oversized, useless "unplaced" list instead of just the handful
+    // of games actually still needed.
+    const queuedCount = new Map<string, number>(teamIds.map((id) => [id, 0]));
+    for (const [a, b] of pendingQueue) {
+      queuedCount.set(a, (queuedCount.get(a) ?? 0) + 1);
+      queuedCount.set(b, (queuedCount.get(b) ?? 0) + 1);
+    }
+    const stillShort = () =>
+      teamIds.some((id) => (gamesPlayed.get(id) ?? 0) + (queuedCount.get(id) ?? 0) < input.gamesPerTeam);
+    let topUpRounds = 0;
+    while (stillShort() && topUpRounds < cycleRounds.length * 4) {
+      roundIndex = (roundIndex + 1) % cycleRounds.length;
+      const nextRound = cycleRounds[roundIndex];
+      pendingQueue.push(...nextRound);
+      for (const [a, b] of nextRound) {
+        queuedCount.set(a, (queuedCount.get(a) ?? 0) + 1);
+        queuedCount.set(b, (queuedCount.get(b) ?? 0) + 1);
+      }
+      topUpRounds++;
     }
 
     // ---- Step 4b: matchups that never found a home within the date
@@ -728,15 +784,21 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     const MAX_SUGGESTIONS_PER_MATCHUP = 3;
     const unplacedMatchups: UnplacedMatchup[] = pendingQueue
       .filter(
-        ([homeId, awayId]) =>
-          (gamesPlayed.get(homeId) ?? 0) < input.gamesPerTeam && (gamesPlayed.get(awayId) ?? 0) < input.gamesPerTeam
+        ([teamX, teamY]) =>
+          (gamesPlayed.get(teamX) ?? 0) < input.gamesPerTeam && (gamesPlayed.get(teamY) ?? 0) < input.gamesPerTeam
       )
-      .map(([homeId, awayId]) => {
+      .map(([teamX, teamY]) => {
+        // Same greedy home/away balance as the real placement loop above,
+        // based on home counts as they actually stand — a suggestion, not
+        // a placement, so this doesn't update homeCount itself.
+        const homeTeamId = (homeCount.get(teamX) ?? 0) <= (homeCount.get(teamY) ?? 0) ? teamX : teamY;
+        const awayTeamId = homeTeamId === teamX ? teamY : teamX;
+
         const candidateSlots: UnplacedMatchup['candidateSlots'] = [];
         for (const date of gameDates) {
           if (candidateSlots.length >= MAX_SUGGESTIONS_PER_MATCHUP) break;
           const wk = getWeekKey(date, weekStartDay);
-          if (teamWeekCommitments.get(homeId)?.has(wk) || teamWeekCommitments.get(awayId)?.has(wk)) continue;
+          if (teamWeekCommitments.get(teamX)?.has(wk) || teamWeekCommitments.get(teamY)?.has(wk)) continue;
 
           const configuredSlots = slotsByDay.get(date.getDay());
           if (!configuredSlots) continue;
@@ -748,7 +810,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
             if (occupied.has(`${slot.field}|${isoTime}`)) continue;
             const startMs = new Date(isoTime).getTime();
             const endMs = startMs + input.gameDurationMinutes * 60000;
-            if (coachConflictAt(homeId, awayId, startMs, endMs)) continue;
+            if (coachConflictAt(teamX, teamY, startMs, endMs)) continue;
 
             candidateSlots.push({
               startTime: isoTime,
@@ -758,7 +820,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
             if (candidateSlots.length >= MAX_SUGGESTIONS_PER_MATCHUP) break;
           }
         }
-        return { homeTeamId: homeId, awayTeamId: awayId, candidateSlots };
+        return { homeTeamId, awayTeamId, candidateSlots };
       });
 
     if (eventsToInsert.length === 0) {
