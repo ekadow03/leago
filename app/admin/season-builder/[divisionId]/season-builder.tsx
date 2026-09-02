@@ -393,6 +393,7 @@ function ScheduleGenerator({
     coachConflictsAvoided: number;
     weeklyCapDeferred: number;
     roundGroupWaits: number;
+    roundsSkippedForBlackout: number;
     targetReached: boolean;
     settingsSaveWarning?: string;
   } | null>(null);
@@ -799,6 +800,8 @@ function ScheduleGenerator({
               ` Pushed ${result.weeklyCapDeferred} game(s) to a later week to stay under the max-games-per-week limit.`}
             {result.roundGroupWaits > 0 &&
               ` Left ${result.roundGroupWaits} date(s) unused because it wasn't that round group's turn yet.`}
+            {result.roundsSkippedForBlackout > 0 &&
+              ` Skipped ${result.roundsSkippedForBlackout} whole round(s) because every date available to them that turn was blacked out or reserved.`}
           </p>
           {!result.targetReached && (
             <p style={{ color: '#B23A2E', fontSize: 13, marginTop: -4 }}>
