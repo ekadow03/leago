@@ -147,6 +147,13 @@ export default function ScheduleBuilder({
   const [editWeekNumber, setEditWeekNumber] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
 
+  // Drag-and-drop for draft events: draggedId is the event currently
+  // being dragged; dragOverWeekKey highlights whichever week section
+  // it's hovering (undefined = none — null is itself a valid week key,
+  // for the 'Unscheduled' bucket, so it can't double as 'no hover').
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dragOverWeekKey, setDragOverWeekKey] = useState<number | null | undefined>(undefined);
+
   const divisionsForSeason = divisions.filter((d) => d.season_id === selectedSeasonId);
 
   // Teams offered in the manual "Add event"/edit-event team pickers —
@@ -693,6 +700,129 @@ export default function ScheduleBuilder({
     return teams.find((t) => t.id === teamId)?.name ?? '';
   }
 
+  // Drag-and-drop for draft events: drag one onto a different week's
+  // section below to reassign its week_number only (the actual date/time
+  // is left untouched — week_number is already just a display label, see
+  // the grouping comment above), or drop it directly onto another draft
+  // game to swap which teams are assigned to each (fixes "these two got
+  // paired backwards" without retyping team names). Published games are
+  // left out entirely — those are already visible to coaches/parents, so
+  // moving them stays a deliberate action through the Edit form, which
+  // runs the same conflict check either way.
+  async function updateWithConflictConfirm(
+    patch: Parameters<typeof updateEvent>[0]
+  ): Promise<{ ok: true } | { error: string } | { cancelled: true }> {
+    const result = await updateEvent(patch);
+    if ('conflicts' in result) {
+      if (confirm(describeConflicts(result.conflicts))) {
+        return updateWithConflictConfirm({ ...patch, allowConflicts: true });
+      }
+      return { cancelled: true };
+    }
+    return result;
+  }
+
+  async function moveToWeek(eventId: string, weekKey: number | null) {
+    setError(null);
+    const result = await updateEvent({ organizationId, eventId, weekNumber: weekKey });
+    if ('error' in result) {
+      setError(result.error);
+      return;
+    }
+    if ('conflicts' in result) return; // a week-number-only patch never triggers this check
+    setEvents((prev) => prev.map((ev) => (ev.id === eventId ? { ...ev, week_number: weekKey } : ev)));
+  }
+
+  async function swapTeams(a: EventRow, b: EventRow) {
+    setError(null);
+    const resA = await updateWithConflictConfirm({
+      organizationId,
+      eventId: a.id,
+      homeTeamId: b.home_team_id,
+      awayTeamId: b.away_team_id,
+    });
+    if ('error' in resA) {
+      setError(resA.error);
+      return;
+    }
+    if ('cancelled' in resA) return;
+
+    const resB = await updateWithConflictConfirm({
+      organizationId,
+      eventId: b.id,
+      homeTeamId: a.home_team_id,
+      awayTeamId: a.away_team_id,
+    });
+    if ('error' in resB || 'cancelled' in resB) {
+      // b's half didn't go through (declined or failed) — put a back the
+      // way it was so we don't leave the pair half-swapped.
+      await updateEvent({
+        organizationId,
+        eventId: a.id,
+        homeTeamId: a.home_team_id,
+        awayTeamId: a.away_team_id,
+        allowConflicts: true,
+      });
+      if ('error' in resB) setError(resB.error);
+      return;
+    }
+
+    setEvents((prev) =>
+      prev.map((ev) => {
+        if (ev.id === a.id) return { ...ev, home_team_id: b.home_team_id, away_team_id: b.away_team_id };
+        if (ev.id === b.id) return { ...ev, home_team_id: a.home_team_id, away_team_id: a.away_team_id };
+        return ev;
+      })
+    );
+  }
+
+  function handleDragStart(e: React.DragEvent, eventId: string) {
+    setDraggedId(eventId);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', eventId);
+  }
+
+  function handleDragEnd() {
+    setDraggedId(null);
+    setDragOverWeekKey(undefined);
+  }
+
+  function handleDropOnGame(e: React.DragEvent, target: EventRow) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverWeekKey(undefined);
+    const sourceId = draggedId;
+    setDraggedId(null);
+    if (!sourceId || sourceId === target.id) return;
+    const source = events.find((ev) => ev.id === sourceId);
+    if (!source || source.status === 'published') return;
+
+    if (source.type === 'game' && target.type === 'game') {
+      if (source.division_id !== target.division_id) {
+        setError("Can't swap teams between games in different divisions.");
+        return;
+      }
+      swapTeams(source, target);
+      return;
+    }
+    // Dropped on a non-game (or mixed-type) row — fall back to a week
+    // move using whatever week that row is under.
+    moveToWeek(sourceId, target.week_number ?? null);
+  }
+
+  function handleDropOnWeek(e: React.DragEvent, weekKey: number | null) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverWeekKey(undefined);
+    const sourceId = draggedId;
+    setDraggedId(null);
+    if (!sourceId) return;
+    const source = events.find((ev) => ev.id === sourceId);
+    if (!source || source.status === 'published') return;
+    if ((source.week_number ?? null) === weekKey) return;
+    moveToWeek(sourceId, weekKey);
+  }
+
   function renderEventRow(ev: EventRow) {
     if (editingId === ev.id) {
       return (
@@ -737,8 +867,20 @@ export default function ScheduleBuilder({
       );
     }
 
+    const draggableRow = ev.status !== 'published';
     return (
-      <div key={ev.id} className="data-row">
+      <div
+        key={ev.id}
+        className="data-row"
+        draggable={draggableRow}
+        onDragStart={draggableRow ? (e) => handleDragStart(e, ev.id) : undefined}
+        onDragEnd={draggableRow ? handleDragEnd : undefined}
+        onDragOver={(e) => {
+          if (draggedId && draggedId !== ev.id) e.preventDefault();
+        }}
+        onDrop={(e) => handleDropOnGame(e, ev)}
+        style={{ opacity: draggedId === ev.id ? 0.4 : 1, cursor: draggableRow ? 'grab' : undefined }}
+      >
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
           <input
             type="checkbox"
@@ -1005,8 +1147,30 @@ export default function ScheduleBuilder({
                 )}
               </div>
 
+              <p style={{ fontSize: 12, color: 'var(--gray)', marginBottom: 12 }}>
+                Drag a draft game or event onto a different week below to move it there, or drop one draft game
+                directly onto another to swap which teams are assigned to each. Published games aren&apos;t
+                draggable — unpublish first, or use Edit.
+              </p>
+
               {sortedWeekKeys.map((weekKey) => (
-                <div key={weekKey ?? 'unscheduled'} style={{ marginBottom: 20 }}>
+                <div
+                  key={weekKey ?? 'unscheduled'}
+                  style={{
+                    marginBottom: 20,
+                    outline: draggedId && dragOverWeekKey === weekKey ? '2px dashed var(--blue)' : undefined,
+                    outlineOffset: 4,
+                    borderRadius: 8,
+                  }}
+                  onDragOver={(e) => {
+                    if (draggedId) {
+                      e.preventDefault();
+                      setDragOverWeekKey(weekKey);
+                    }
+                  }}
+                  onDragLeave={() => setDragOverWeekKey((k) => (k === weekKey ? undefined : k))}
+                  onDrop={(e) => handleDropOnWeek(e, weekKey)}
+                >
                   <h3 style={{ fontSize: 14, color: 'var(--gray)', marginBottom: 8 }}>
                     {weekKey === null ? 'Unscheduled / manually added' : `Week ${weekKey}`}
                   </h3>
