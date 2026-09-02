@@ -41,6 +41,11 @@ interface SavedDaySlot {
   dayOfWeek: number;
   time: string;
   field: string;
+  // Which independent round-robin track this day's games belong to (see
+  // DaySlotInput in auto-schedule.ts). Optional so settings saved before
+  // this feature still restore fine — every slot for a day carries the
+  // same value, since the picker assigns a group per day, not per slot.
+  roundGroup?: string;
 }
 
 interface SavedSettings {
@@ -59,9 +64,11 @@ interface SavedSettings {
 function slotsToPickerState(slots: SavedDaySlot[]): {
   activeDays: number[];
   daySlots: Record<number, TimeGroup[]>;
+  dayRoundGroup: Record<number, string>;
 } {
   const activeDays = Array.from(new Set(slots.map((s) => s.dayOfWeek))).sort((a, b) => a - b);
   const daySlots: Record<number, TimeGroup[]> = {};
+  const dayRoundGroup: Record<number, string> = {};
   for (const slot of slots) {
     const groups = daySlots[slot.dayOfWeek] ?? (daySlots[slot.dayOfWeek] = []);
     let group = groups.find((g) => g.time === slot.time);
@@ -70,12 +77,19 @@ function slotsToPickerState(slots: SavedDaySlot[]): {
       groups.push(group);
     }
     if (!group.fields.includes(slot.field)) group.fields.push(slot.field);
+    if (!dayRoundGroup[slot.dayOfWeek]) dayRoundGroup[slot.dayOfWeek] = slot.roundGroup || 'A';
   }
   for (const day of Object.keys(daySlots)) {
     daySlots[Number(day)].sort((a, b) => a.time.localeCompare(b.time));
   }
-  return { activeDays, daySlots };
+  return { activeDays, daySlots, dayRoundGroup };
 }
+
+// A fixed, small set of round-robin track labels an admin can assign a
+// day to — plenty for the realistic cases (a weeknight track and a
+// Saturday track being the most common) without an open-ended "add a
+// group" control to manage.
+const ROUND_GROUP_OPTIONS = ['A', 'B', 'C', 'D'];
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -224,6 +238,8 @@ function DaySlotEditor({
   day,
   timeGroups,
   fields,
+  roundGroup,
+  onChangeRoundGroup,
   onAddTime,
   onRemoveTime,
   onAddField,
@@ -232,6 +248,8 @@ function DaySlotEditor({
   day: number;
   timeGroups: TimeGroup[];
   fields: string[];
+  roundGroup: string;
+  onChangeRoundGroup: (group: string) => void;
   onAddTime: (time: string) => void;
   onRemoveTime: (time: string) => void;
   onAddField: (time: string, field: string) => void;
@@ -241,7 +259,24 @@ function DaySlotEditor({
 
   return (
     <div style={{ background: 'var(--gray-light)', borderRadius: 10, padding: 14, marginBottom: 10 }}>
-      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 10 }}>{DAY_LABELS[day]} slots</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <div style={{ fontWeight: 700, fontSize: 13 }}>{DAY_LABELS[day]} slots</div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--gray)' }}>
+          Round group
+          <select
+            value={roundGroup}
+            onChange={(e) => onChangeRoundGroup(e.target.value)}
+            className="form-input"
+            style={{ width: 64, marginBottom: 0, padding: '4px 6px' }}
+          >
+            {ROUND_GROUP_OPTIONS.map((g) => (
+              <option key={g} value={g}>
+                {g}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
 
       {timeGroups.length === 0 && (
         <p style={{ fontSize: 12, color: 'var(--gray)', marginBottom: 10 }}>No times yet — add one below.</p>
@@ -327,6 +362,11 @@ function ScheduleGenerator({
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [activeDays, setActiveDays] = useState<number[]>(restored?.activeDays ?? []);
   const [daySlots, setDaySlots] = useState<Record<number, TimeGroup[]>>(restored?.daySlots ?? {});
+  // Which round-robin track (see ROUND_GROUP_OPTIONS) each active day
+  // feeds into. A day not present here defaults to 'A' — the single
+  // shared track every day starts in, so ignoring this control entirely
+  // reproduces the old one-continuous-round-robin behavior.
+  const [dayRoundGroup, setDayRoundGroup] = useState<Record<number, string>>(restored?.dayRoundGroup ?? {});
   const [gamesPerTeam, setGamesPerTeam] = useState(initialSettings ? String(initialSettings.games_per_team) : '');
   const [gameDuration, setGameDuration] = useState(
     initialSettings ? String(initialSettings.game_duration_minutes) : '60'
@@ -410,10 +450,20 @@ function ScheduleGenerator({
           delete next[day];
           return next;
         });
+        setDayRoundGroup((g) => {
+          const next = { ...g };
+          delete next[day];
+          return next;
+        });
         return prev.filter((d) => d !== day);
       }
+      setDayRoundGroup((g) => (g[day] ? g : { ...g, [day]: 'A' }));
       return [...prev, day].sort();
     });
+  }
+
+  function setRoundGroupForDay(day: number, group: string) {
+    setDayRoundGroup((prev) => ({ ...prev, [day]: group }));
   }
 
   function addTimeToDay(day: number, time: string) {
@@ -473,7 +523,14 @@ function ScheduleGenerator({
     setResult(null);
     try {
       const flatSlots = Object.entries(daySlots).flatMap(([day, groups]) =>
-        groups.flatMap((g) => g.fields.map((field) => ({ dayOfWeek: Number(day), time: g.time, field })))
+        groups.flatMap((g) =>
+          g.fields.map((field) => ({
+            dayOfWeek: Number(day),
+            time: g.time,
+            field,
+            roundGroup: dayRoundGroup[Number(day)] ?? 'A',
+          }))
+        )
       );
       const res = await generateSeasonSchedule({
         organizationId,
@@ -618,12 +675,22 @@ function ScheduleGenerator({
         ))}
       </div>
 
+      {activeDays.length > 1 && (
+        <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -4, marginBottom: 12 }}>
+          Days in the same round group share one continuous round-robin schedule. Give a day its own group
+          (e.g. Saturday as group B while weeknights stay group A) so its games form separate, complete rounds
+          instead of a weeknight round quietly spilling into the weekend.
+        </p>
+      )}
+
       {activeDays.map((day) => (
         <DaySlotEditor
           key={day}
           day={day}
           timeGroups={daySlots[day] ?? []}
           fields={fields}
+          roundGroup={dayRoundGroup[day] ?? 'A'}
+          onChangeRoundGroup={(group) => setRoundGroupForDay(day, group)}
           onAddTime={(time) => addTimeToDay(day, time)}
           onRemoveTime={(time) => removeTimeFromDay(day, time)}
           onAddField={(time, field) => addFieldToTime(day, time, field)}
