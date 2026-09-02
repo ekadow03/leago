@@ -23,6 +23,8 @@ interface Blackout {
   field_name: string | null;
   kind: 'date' | 'weekly' | 'daily';
   blackout_date: string | null;
+  end_date: string | null;
+  days_of_week: number[] | null;
   day_of_week: number | null;
   start_time: string | null;
   end_time: string | null;
@@ -837,17 +839,31 @@ function ScheduleGenerator({
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+function formatShortDate(dateStr: string): string {
+  return new Date(`${dateStr}T00:00:00`).toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
 function describeBlackout(b: Blackout): string {
   const timeRange = b.start_time && b.end_time ? `${formatTime12h(b.start_time)}–${formatTime12h(b.end_time)}` : 'All day';
   const field = b.field_name ? b.field_name : 'All fields';
   let when: string;
-  if (b.kind === 'date' && b.blackout_date) {
-    when = new Date(`${b.blackout_date}T00:00:00`).toLocaleDateString(undefined, {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    });
+  if (b.kind === 'date' && b.blackout_date && b.end_date) {
+    const dayRestriction =
+      b.days_of_week && b.days_of_week.length > 0 && b.days_of_week.length < 7
+        ? ` (${b.days_of_week
+            .slice()
+            .sort((a, c) => a - c)
+            .map((d) => DAY_NAMES[d].slice(0, 3))
+            .join(', ')} only)`
+        : '';
+    when = `${formatShortDate(b.blackout_date)} – ${formatShortDate(b.end_date)}${dayRestriction}`;
+  } else if (b.kind === 'date' && b.blackout_date) {
+    when = formatShortDate(b.blackout_date);
   } else if (b.kind === 'weekly' && b.day_of_week !== null) {
     when = `Every ${DAY_NAMES[b.day_of_week]}`;
   } else {
@@ -877,6 +893,8 @@ function BlackoutPanel({
   const [showForm, setShowForm] = useState(false);
   const [kind, setKind] = useState<'date' | 'weekly' | 'daily'>('date');
   const [blackoutDate, setBlackoutDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [daysOfWeek, setDaysOfWeek] = useState<Set<number>>(new Set([0, 1, 2, 3, 4, 5, 6]));
   const [dayOfWeek, setDayOfWeek] = useState('0');
   const [fullDay, setFullDay] = useState(true);
   const [startTime, setStartTime] = useState('');
@@ -886,17 +904,30 @@ function BlackoutPanel({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  function toggleDayOfWeek(day: number) {
+    setDaysOfWeek((prev) => {
+      const next = new Set(prev);
+      if (next.has(day)) next.delete(day);
+      else next.add(day);
+      return next;
+    });
+  }
+
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
     try {
+      const isRange = kind === 'date' && endDate.trim() !== '';
+      const daysOfWeekArray = isRange && daysOfWeek.size < 7 ? Array.from(daysOfWeek).sort((a, b) => a - b) : undefined;
       const result = await createBlackout({
         organizationId,
         seasonId,
         kind,
         fieldName: fieldName || undefined,
         blackoutDate: kind === 'date' ? blackoutDate : undefined,
+        endDate: isRange ? endDate : undefined,
+        daysOfWeek: daysOfWeekArray,
         dayOfWeek: kind === 'weekly' ? Number(dayOfWeek) : undefined,
         startTime: fullDay ? undefined : startTime || undefined,
         endTime: fullDay ? undefined : endTime || undefined,
@@ -912,12 +943,16 @@ function BlackoutPanel({
         field_name: fieldName || null,
         kind,
         blackout_date: kind === 'date' ? blackoutDate : null,
+        end_date: isRange ? endDate : null,
+        days_of_week: daysOfWeekArray && daysOfWeekArray.length > 0 ? daysOfWeekArray : null,
         day_of_week: kind === 'weekly' ? Number(dayOfWeek) : null,
         start_time: fullDay ? null : startTime || null,
         end_time: fullDay ? null : endTime || null,
         label: label.trim() || null,
       });
       setBlackoutDate('');
+      setEndDate('');
+      setDaysOfWeek(new Set([0, 1, 2, 3, 4, 5, 6]));
       setStartTime('');
       setEndTime('');
       setFieldName('');
@@ -967,14 +1002,14 @@ function BlackoutPanel({
         <form onSubmit={handleAdd} style={{ marginTop: 12 }}>
           <label className="form-label">Type</label>
           <select value={kind} onChange={(e) => setKind(e.target.value as any)} className="form-input">
-            <option value="date">Specific date (e.g. a holiday)</option>
+            <option value="date">Specific date, or a date range (e.g. a holiday, or a stretch of the season)</option>
             <option value="weekly">Same day every week this season</option>
             <option value="daily">Every day this season</option>
           </select>
 
           {kind === 'date' && (
             <>
-              <label className="form-label">Date</label>
+              <label className="form-label">{endDate ? 'Start date' : 'Date'}</label>
               <input
                 type="date"
                 value={blackoutDate}
@@ -982,6 +1017,52 @@ function BlackoutPanel({
                 className="form-input"
                 required
               />
+
+              <label className="form-label">End date (optional — leave blank for a single day)</label>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="form-input"
+                min={blackoutDate || undefined}
+              />
+
+              {endDate && (
+                <>
+                  <label className="form-label">Days within that range (uncheck to restrict, e.g. weekdays only)</label>
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', margin: '4px 0 12px' }}>
+                    {DAY_NAMES.map((name, i) => (
+                      <label key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13 }}>
+                        <input type="checkbox" checked={daysOfWeek.has(i)} onChange={() => toggleDayOfWeek(i)} />
+                        {name.slice(0, 3)}
+                      </label>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                    <button
+                      type="button"
+                      onClick={() => setDaysOfWeek(new Set([0, 1, 2, 3, 4, 5, 6]))}
+                      className="btn-small"
+                    >
+                      Every day
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDaysOfWeek(new Set([1, 2, 3, 4, 5]))}
+                      className="btn-small"
+                    >
+                      Weekdays only
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDaysOfWeek(new Set([0, 6]))}
+                      className="btn-small"
+                    >
+                      Weekends only
+                    </button>
+                  </div>
+                </>
+              )}
             </>
           )}
 

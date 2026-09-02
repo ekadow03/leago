@@ -155,6 +155,8 @@ interface BlackoutRow {
   kind: 'date' | 'weekly' | 'daily';
   field_name: string | null;
   blackout_date: string | null;
+  end_date: string | null;
+  days_of_week: number[] | null;
   day_of_week: number | null;
   start_time: string | null;
   end_time: string | null;
@@ -195,9 +197,22 @@ function isBlackedOut(date: Date, time: string, field: string, blackouts: Blacko
     if (b.field_name && b.field_name.toLowerCase() !== field.toLowerCase()) continue;
 
     let dayMatches = false;
-    if (b.kind === 'date') dayMatches = b.blackout_date === dateStr;
-    else if (b.kind === 'weekly') dayMatches = b.day_of_week === date.getDay();
-    else if (b.kind === 'daily') dayMatches = true;
+    if (b.kind === 'date' && b.end_date) {
+      // A ranged date blackout: every day from blackout_date through
+      // end_date (inclusive), optionally restricted to specific weekdays
+      // within that range (e.g. "weekdays only" for a lack-of-sunlight
+      // stretch of the season) — see migration 0025.
+      dayMatches =
+        dateStr >= b.blackout_date! &&
+        dateStr <= b.end_date &&
+        (!b.days_of_week || b.days_of_week.length === 0 || b.days_of_week.includes(date.getDay()));
+    } else if (b.kind === 'date') {
+      dayMatches = b.blackout_date === dateStr;
+    } else if (b.kind === 'weekly') {
+      dayMatches = b.day_of_week === date.getDay();
+    } else if (b.kind === 'daily') {
+      dayMatches = true;
+    }
     if (!dayMatches) continue;
 
     if (!b.start_time || !b.end_time) return true; // whole day/occurrence blocked
@@ -391,7 +406,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     // division, so every division sharing it is protected the same way. ----
     const { data: blackoutRows } = await admin
       .from('blackouts')
-      .select('kind, field_name, blackout_date, day_of_week, start_time, end_time')
+      .select('kind, field_name, blackout_date, end_date, days_of_week, day_of_week, start_time, end_time')
       .eq('season_id', input.seasonId);
 
     const blackouts: BlackoutRow[] = blackoutRows ?? [];

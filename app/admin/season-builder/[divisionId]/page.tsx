@@ -84,7 +84,7 @@ export default async function SeasonBuilderPage({
   // right alongside the slots/dates they actually constrain.
   const { data: blackouts } = await supabase
     .from('blackouts')
-    .select('id, season_id, field_name, kind, blackout_date, day_of_week, start_time, end_time, label')
+    .select('id, season_id, field_name, kind, blackout_date, end_date, days_of_week, day_of_week, start_time, end_time, label')
     .eq('season_id', division.season_id);
 
   // This division's field priority ranking (migration 0018), lowest

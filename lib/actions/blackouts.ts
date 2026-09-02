@@ -17,7 +17,9 @@ interface CreateBlackoutInput {
   seasonId: string;
   kind: 'date' | 'weekly' | 'daily';
   fieldName?: string | null;
-  blackoutDate?: string; // "2026-11-26" — required for kind='date'
+  blackoutDate?: string; // "2026-11-26" — required for kind='date' (the start date, when endDate is also set)
+  endDate?: string; // "2026-12-02" — optional, kind='date' only: extends blackoutDate into a range
+  daysOfWeek?: number[]; // 0=Sun..6=Sat — optional, only meaningful alongside endDate: restrict the range to these weekdays
   dayOfWeek?: number; // 0=Sun..6=Sat — required for kind='weekly'
   startTime?: string; // "18:00" — omit together with endTime for a full-day/full-occurrence block
   endTime?: string;
@@ -38,6 +40,15 @@ export async function createBlackout(input: CreateBlackoutInput): Promise<Create
     }
     if (input.kind === 'weekly' && (input.dayOfWeek === undefined || input.dayOfWeek === null)) {
       return { error: 'Pick a day of the week for a weekly blackout.' };
+    }
+    if (input.endDate && input.kind !== 'date') {
+      return { error: 'A date range only applies to a specific-date blackout.' };
+    }
+    if (input.endDate && input.blackoutDate && input.endDate < input.blackoutDate) {
+      return { error: 'End date must be on or after the start date.' };
+    }
+    if (input.daysOfWeek && input.daysOfWeek.some((d) => d < 0 || d > 6 || !Number.isInteger(d))) {
+      return { error: 'Invalid day of week.' };
     }
     if ((input.startTime && !input.endTime) || (!input.startTime && input.endTime)) {
       return { error: 'Set both a start and end time, or leave both blank for a full day.' };
@@ -70,6 +81,11 @@ export async function createBlackout(input: CreateBlackoutInput): Promise<Create
         kind: input.kind,
         field_name: input.fieldName || null,
         blackout_date: input.kind === 'date' ? input.blackoutDate : null,
+        end_date: input.kind === 'date' ? input.endDate || null : null,
+        days_of_week:
+          input.kind === 'date' && input.endDate && input.daysOfWeek && input.daysOfWeek.length > 0
+            ? input.daysOfWeek
+            : null,
         day_of_week: input.kind === 'weekly' ? input.dayOfWeek : null,
         start_time: input.startTime || null,
         end_time: input.endTime || null,
