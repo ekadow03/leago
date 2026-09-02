@@ -112,6 +112,7 @@ export default function SeasonBuilder({
   initialBlackouts,
   initialFieldNames,
   initialSettings,
+  settingsLoadError,
 }: {
   organizationId: string;
   seasonId: string;
@@ -124,6 +125,7 @@ export default function SeasonBuilder({
   initialBlackouts: Blackout[];
   initialFieldNames: string[];
   initialSettings: SavedSettings | null;
+  settingsLoadError: string | null;
 }) {
   return (
     <div>
@@ -140,6 +142,7 @@ export default function SeasonBuilder({
         initialBlackouts={initialBlackouts}
         initialFieldNames={initialFieldNames}
         initialSettings={initialSettings}
+        settingsLoadError={settingsLoadError}
       />
     </div>
   );
@@ -322,6 +325,7 @@ function ScheduleGenerator({
   initialBlackouts,
   initialFieldNames,
   initialSettings,
+  settingsLoadError,
 }: {
   organizationId: string;
   seasonId: string;
@@ -334,6 +338,7 @@ function ScheduleGenerator({
   initialBlackouts: Blackout[];
   initialFieldNames: string[];
   initialSettings: SavedSettings | null;
+  settingsLoadError: string | null;
 }) {
   const [blackouts, setBlackouts] = useState(initialBlackouts);
 
@@ -389,6 +394,7 @@ function ScheduleGenerator({
     weeklyCapDeferred: number;
     roundGroupWaits: number;
     targetReached: boolean;
+    settingsSaveWarning?: string;
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -574,6 +580,14 @@ function ScheduleGenerator({
         </Link>{' '}
         page when ready.
       </p>
+
+      {settingsLoadError && (
+        <p style={{ fontSize: 13, color: '#B23A2E', background: 'rgba(178,58,46,0.1)', padding: '8px 12px', borderRadius: 8, marginBottom: 16 }}>
+          Couldn&apos;t load your last-used settings for this division, so the form below is starting blank
+          instead of restoring what you generated with before — anything you generate now will still save fine.
+          Error: {settingsLoadError}
+        </p>
+      )}
 
       {(draftGameCount > 0 || publishedGameCount > 0) && (
         <p style={{ fontSize: 13, color: '#92660B', background: 'rgba(232,185,61,0.15)', padding: '8px 12px', borderRadius: 8, marginBottom: 16 }}>
@@ -790,6 +804,12 @@ function ScheduleGenerator({
             <p style={{ color: '#B23A2E', fontSize: 13, marginTop: -4 }}>
               Heads up: not every team reached {gamesPerTeamNum} games before the end date. Add more times/fields,
               extend the end date, or lower the games-per-team target and regenerate.
+            </p>
+          )}
+          {result.settingsSaveWarning && (
+            <p style={{ color: '#B23A2E', fontSize: 13, marginTop: -4 }}>
+              Heads up: the games above were created fine, but your inputs weren&apos;t saved for next visit —
+              you&apos;ll need to re-enter them if you come back later. Error: {result.settingsSaveWarning}
             </p>
           )}
         </>

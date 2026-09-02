@@ -222,6 +222,13 @@ type GenerateScheduleResult =
       weeklyCapDeferred: number;
       roundGroupWaits: number;
       targetReached: boolean;
+      // Set only when the best-effort "remember these inputs" write in
+      // Step 6 fails — the schedule itself already succeeded by then, so
+      // this doesn't turn generation into a failure, but a silently
+      // swallowed error here is exactly what made settings appear to
+      // "randomly stop saving": worth surfacing so it's diagnosable
+      // instead of invisible.
+      settingsSaveWarning?: string;
     }
   | { error: string };
 
@@ -744,8 +751,14 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     // and so a later regenerate is a single click. Best-effort — the
     // schedule itself already succeeded above, so a failure here doesn't
     // fail the whole generation, it just means the form won't pre-fill
-    // next visit. ----
-    await admin.from('schedule_generation_settings').upsert(
+    // next visit. The error IS still captured and surfaced (rather than
+    // silently discarded) so a schema drift — e.g. a migration adding a
+    // column this upsert writes, like max_games_per_week/week_start_day
+    // in 0024, not yet applied to this database — shows up as a visible
+    // warning instead of quietly losing every setting from here on,
+    // including ones that used to save fine before this write started
+    // referencing the new columns. ----
+    const { error: settingsSaveError } = await admin.from('schedule_generation_settings').upsert(
       {
         organization_id: input.organizationId,
         division_id: input.divisionId,
@@ -760,6 +773,9 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
       },
       { onConflict: 'division_id' }
     );
+    if (settingsSaveError) {
+      console.error('Failed to save schedule generation settings for next visit:', settingsSaveError);
+    }
 
     return {
       gamesCreated: eventsToInsert.length,
@@ -772,6 +788,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
       weeklyCapDeferred,
       roundGroupWaits,
       targetReached: targetReachedFor(),
+      settingsSaveWarning: settingsSaveError ? settingsSaveError.message : undefined,
     };
   } catch (err) {
     return {

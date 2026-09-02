@@ -106,11 +106,21 @@ export default async function SeasonBuilderPage({
   // it's been generated before — restored into the form below so
   // regenerating with today's teams/blackouts/priorities doesn't mean
   // re-entering every day/time/field slot from scratch.
-  const { data: savedSettings } = await supabase
+  const { data: savedSettings, error: savedSettingsError } = await supabase
     .from('schedule_generation_settings')
     .select('day_slots, games_per_team, game_duration_minutes, start_date, end_date, max_games_per_week, week_start_day')
     .eq('division_id', divisionId)
     .maybeSingle();
+
+  // A query error here (e.g. a column this select expects doesn't exist
+  // yet in the database) silently produces savedSettings: null just like
+  // "no row saved yet" would — surfacing the real error is the only way
+  // to tell "you've never generated a schedule for this division" apart
+  // from "a pending database migration hasn't been applied," which looks
+  // identical to an admin as "my settings keep disappearing."
+  if (savedSettingsError) {
+    console.error('Failed to load saved schedule generation settings:', savedSettingsError);
+  }
 
   return (
     <div className="admin-page">
@@ -135,6 +145,7 @@ export default async function SeasonBuilderPage({
           initialBlackouts={(blackouts as any) ?? []}
           initialFieldNames={initialFieldNames}
           initialSettings={(savedSettings as any) ?? null}
+          settingsLoadError={savedSettingsError ? savedSettingsError.message : null}
         />
       </div>
     </div>
