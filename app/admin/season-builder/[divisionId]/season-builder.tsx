@@ -973,7 +973,11 @@ function BlackoutPanel({
   const [fullDay, setFullDay] = useState(true);
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
-  const [fieldName, setFieldName] = useState('');
+  // Empty = every field (today's "All fields" behavior). One row still
+  // only ever names one field (see migration 0017) — picking more than
+  // one here just submits multiple rows, one per field, all sharing the
+  // same date/time/label, rather than changing how a row is stored.
+  const [selectedFields, setSelectedFields] = useState<Set<string>>(new Set());
   const [label, setLabel] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -987,6 +991,15 @@ function BlackoutPanel({
     });
   }
 
+  function toggleField(name: string) {
+    setSelectedFields((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
@@ -994,42 +1007,56 @@ function BlackoutPanel({
     try {
       const isRange = kind === 'date' && endDate.trim() !== '';
       const daysOfWeekArray = isRange && daysOfWeek.size < 7 ? Array.from(daysOfWeek).sort((a, b) => a - b) : undefined;
-      const result = await createBlackout({
-        organizationId,
-        seasonId,
-        kind,
-        fieldName: fieldName || undefined,
-        blackoutDate: kind === 'date' ? blackoutDate : undefined,
-        endDate: isRange ? endDate : undefined,
-        daysOfWeek: daysOfWeekArray,
-        dayOfWeek: kind === 'weekly' ? Number(dayOfWeek) : undefined,
-        startTime: fullDay ? undefined : startTime || undefined,
-        endTime: fullDay ? undefined : endTime || undefined,
-        label: label || undefined,
-      });
-      if ('error' in result) {
-        setError(result.error);
-        return;
+      // None checked = every field (today's "All fields" row, field_name
+      // null). Otherwise submit one row per checked field, one at a
+      // time, so a failure partway through still keeps whatever already
+      // succeeded instead of losing it.
+      const fieldsToApply: (string | null)[] = selectedFields.size > 0 ? Array.from(selectedFields) : [null];
+      const created: Blackout[] = [];
+      for (const field of fieldsToApply) {
+        const result = await createBlackout({
+          organizationId,
+          seasonId,
+          kind,
+          fieldName: field ?? undefined,
+          blackoutDate: kind === 'date' ? blackoutDate : undefined,
+          endDate: isRange ? endDate : undefined,
+          daysOfWeek: daysOfWeekArray,
+          dayOfWeek: kind === 'weekly' ? Number(dayOfWeek) : undefined,
+          startTime: fullDay ? undefined : startTime || undefined,
+          endTime: fullDay ? undefined : endTime || undefined,
+          label: label || undefined,
+        });
+        if ('error' in result) {
+          for (const row of created) onAdded(row);
+          setError(
+            created.length > 0
+              ? `Added ${created.length} of ${fieldsToApply.length} field(s) before this one failed: ${result.error}`
+              : result.error
+          );
+          return;
+        }
+        created.push({
+          id: result.id,
+          season_id: seasonId,
+          field_name: field,
+          kind,
+          blackout_date: kind === 'date' ? blackoutDate : null,
+          end_date: isRange ? endDate : null,
+          days_of_week: daysOfWeekArray && daysOfWeekArray.length > 0 ? daysOfWeekArray : null,
+          day_of_week: kind === 'weekly' ? Number(dayOfWeek) : null,
+          start_time: fullDay ? null : startTime || null,
+          end_time: fullDay ? null : endTime || null,
+          label: label.trim() || null,
+        });
       }
-      onAdded({
-        id: result.id,
-        season_id: seasonId,
-        field_name: fieldName || null,
-        kind,
-        blackout_date: kind === 'date' ? blackoutDate : null,
-        end_date: isRange ? endDate : null,
-        days_of_week: daysOfWeekArray && daysOfWeekArray.length > 0 ? daysOfWeekArray : null,
-        day_of_week: kind === 'weekly' ? Number(dayOfWeek) : null,
-        start_time: fullDay ? null : startTime || null,
-        end_time: fullDay ? null : endTime || null,
-        label: label.trim() || null,
-      });
+      for (const row of created) onAdded(row);
       setBlackoutDate('');
       setEndDate('');
       setDaysOfWeek(new Set([0, 1, 2, 3, 4, 5, 6]));
       setStartTime('');
       setEndTime('');
-      setFieldName('');
+      setSelectedFields(new Set());
       setLabel('');
       setFullDay(true);
       setShowForm(false);
@@ -1185,15 +1212,23 @@ function BlackoutPanel({
             </div>
           )}
 
-          <label className="form-label">Field</label>
-          <select value={fieldName} onChange={(e) => setFieldName(e.target.value)} className="form-input">
-            <option value="">All fields</option>
-            {fields.map((f) => (
-              <option key={f.id} value={f.name}>
-                {f.name}
-              </option>
-            ))}
-          </select>
+          <label className="form-label">Fields</label>
+          <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -8, marginBottom: 8 }}>
+            Leave none checked to block every field. Check more than one to apply the same blackout to each of
+            them at once (e.g. every field closed for a holiday, or two fields both losing daylight).
+          </p>
+          {fields.length > 0 ? (
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', margin: '4px 0 12px' }}>
+              {fields.map((f) => (
+                <label key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13 }}>
+                  <input type="checkbox" checked={selectedFields.has(f.name)} onChange={() => toggleField(f.name)} />
+                  {f.name}
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p style={{ fontSize: 12, color: 'var(--gray)', marginBottom: 12 }}>No fields set up yet.</p>
+          )}
 
           <label className="form-label">Label (optional)</label>
           <input
