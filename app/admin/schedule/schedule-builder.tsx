@@ -423,10 +423,16 @@ export default function ScheduleBuilder({
     const divisionSeasonId = divisions.find((d) => d.id === selectedDivisionId)?.season_id ?? selectedSeasonId;
     const divisionBlackouts = blackouts.filter((b) => b.season_id === divisionSeasonId);
 
+    // Keyed by actual instant (epoch ms), not the raw ISO string —
+    // Postgres/PostgREST hands back timestamptz as e.g.
+    // "2026-09-12T08:00:00+00:00" while zonedDateTimeToIso below produces
+    // "2026-09-12T08:00:00.000Z" for the exact same instant, so a plain
+    // string comparison would never match and every slot would read as
+    // open even when a game already sits right on it.
     const occupied = new Set<string>();
     for (const ev of events) {
       if (ev.status === 'canceled' || !ev.location) continue;
-      occupied.add(`${ev.start_time}|${ev.location.toLowerCase()}`);
+      occupied.add(`${new Date(ev.start_time).getTime()}|${ev.location.toLowerCase()}`);
     }
 
     for (const date of gameDates) {
@@ -434,7 +440,7 @@ export default function ScheduleBuilder({
       for (const slot of slots) {
         if (isSlotBlackedOut(date, slot.time, slot.field, divisionBlackouts, timeZone)) continue;
         const startTimeIso = zonedDateTimeToIso(date, slot.time, timeZone);
-        if (occupied.has(`${startTimeIso}|${slot.field.toLowerCase()}`)) continue;
+        if (occupied.has(`${new Date(startTimeIso).getTime()}|${slot.field.toLowerCase()}`)) continue;
         openSlots.push({
           key: `${selectedDivisionId}|${dateKeyLocal(date)}|${slot.time}|${slot.field}`,
           date,
