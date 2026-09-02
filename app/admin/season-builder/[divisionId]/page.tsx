@@ -108,7 +108,7 @@ export default async function SeasonBuilderPage({
   // re-entering every day/time/field slot from scratch.
   const { data: savedSettings } = await supabase
     .from('schedule_generation_settings')
-    .select('day_slots, games_per_team, game_duration_minutes, start_date, end_date')
+    .select('day_slots, games_per_team, game_duration_minutes, start_date, end_date, max_games_per_week, week_start_day')
     .eq('division_id', divisionId)
     .maybeSingle();
 

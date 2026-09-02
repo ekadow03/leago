@@ -52,6 +52,16 @@ interface GenerateScheduleInput {
   // without this, "5pm" would get stamped as 5pm UTC instead of 5pm in
   // the league's actual timezone. Falls back to UTC if somehow missing.
   timeZone?: string;
+  // Optional cap on how many games a single team can play within one
+  // calendar week (migration 0024). Undefined/null means no cap — a
+  // matchup is only ever deferred to a later date because of a taken
+  // slot, blackout, field reservation, or coach conflict, same as before
+  // this feature existed.
+  maxGamesPerWeek?: number;
+  // Which weekday (0=Sunday..6=Saturday) starts the calendar week used to
+  // enforce maxGamesPerWeek. Defaults to 0 (Sunday) when omitted. Ignored
+  // entirely when maxGamesPerWeek isn't set.
+  weekStartDay?: number;
 }
 
 /**
@@ -142,6 +152,19 @@ function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
+// Groups a date into a "week" for maxGamesPerWeek purposes, given which
+// weekday starts that week (0=Sunday..6=Saturday). Returns the ISO date
+// (YYYY-MM-DD, in the schedule's own local calendar — not UTC-shifted)
+// of that week's first day, so two dates in the same week always produce
+// an identical, directly comparable key regardless of which day within
+// the week they fall on.
+function getWeekKey(date: Date, weekStartDay: number): string {
+  const diff = (date.getDay() - weekStartDay + 7) % 7;
+  const weekStart = new Date(date);
+  weekStart.setDate(weekStart.getDate() - diff);
+  return `${weekStart.getFullYear()}-${pad2(weekStart.getMonth() + 1)}-${pad2(weekStart.getDate())}`;
+}
+
 // Whether a candidate (date, time, field) slot falls inside any of the
 // season's blackouts — see migration 0017 for what each `kind` means. A
 // blackout with no start/end time blocks the WHOLE occurrence (the whole
@@ -184,6 +207,7 @@ type GenerateScheduleResult =
       blackoutsSkipped: number;
       fieldsReserved: number;
       coachConflictsAvoided: number;
+      weeklyCapDeferred: number;
       targetReached: boolean;
     }
   | { error: string };
@@ -207,8 +231,24 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     if (!Number.isFinite(input.gameDurationMinutes) || input.gameDurationMinutes < 1) {
       return { error: 'Set a game duration of at least 1 minute.' };
     }
+    if (
+      input.maxGamesPerWeek !== undefined &&
+      input.maxGamesPerWeek !== null &&
+      (!Number.isFinite(input.maxGamesPerWeek) || input.maxGamesPerWeek < 1)
+    ) {
+      return { error: 'Max games per week must be at least 1 (leave it blank for no cap).' };
+    }
+    if (
+      input.weekStartDay !== undefined &&
+      (!Number.isInteger(input.weekStartDay) || input.weekStartDay < 0 || input.weekStartDay > 6)
+    ) {
+      return { error: 'Week start day must be between 0 (Sunday) and 6 (Saturday).' };
+    }
 
     const timeZone = input.timeZone || 'UTC';
+    const weekStartDay = input.weekStartDay ?? 0;
+    const maxGamesPerWeek =
+      input.maxGamesPerWeek !== undefined && input.maxGamesPerWeek !== null ? input.maxGamesPerWeek : null;
 
     const admin = createAdminClient();
 
@@ -432,7 +472,21 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     let blackoutsSkipped = 0;
     let fieldsReserved = 0;
     let coachConflictsAvoided = 0;
+    let weeklyCapDeferred = 0;
     let weekNumber = 1; // round 0 is already "week" 1
+
+    // teamId -> calendar-week key (getWeekKey) -> games already placed in
+    // that week. Only consulted/updated when maxGamesPerWeek is set —
+    // otherwise this stays empty and every lookup is 0, i.e. no cap.
+    const gamesThisCalendarWeek = new Map<string, Map<string, number>>();
+    function weeklyCountFor(teamId: string, weekKey: string): number {
+      return gamesThisCalendarWeek.get(teamId)?.get(weekKey) ?? 0;
+    }
+    function recordWeeklyGame(teamId: string, weekKey: string): void {
+      const perWeek = gamesThisCalendarWeek.get(teamId) ?? new Map<string, number>();
+      perWeek.set(weekKey, (perWeek.get(weekKey) ?? 0) + 1);
+      gamesThisCalendarWeek.set(teamId, perWeek);
+    }
 
     const gamesPlayed = new Map<string, number>(teamIds.map((id) => [id, 0]));
     const targetReachedFor = () =>
@@ -472,8 +526,24 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
       const matchupsToTry = [...pendingMatchups];
       pendingMatchups = [];
       const usedSlotIndices = new Set<number>();
+      const weekKey = maxGamesPerWeek !== null ? getWeekKey(date, weekStartDay) : '';
 
       for (const [homeId, awayId] of matchupsToTry) {
+        // A per-team weekly cap (migration 0024) applies to the whole
+        // date, not a specific slot — if either side of this matchup has
+        // already reached it for this calendar week, no slot today will
+        // help, so defer straight to a later date (a later date may fall
+        // in the following week, where the count resets) instead of
+        // burning a slot search.
+        if (
+          maxGamesPerWeek !== null &&
+          (weeklyCountFor(homeId, weekKey) >= maxGamesPerWeek || weeklyCountFor(awayId, weekKey) >= maxGamesPerWeek)
+        ) {
+          weeklyCapDeferred++;
+          pendingMatchups.push([homeId, awayId]);
+          continue;
+        }
+
         let chosenSlotIndex: number | null = null;
         let chosenIsoTime = '';
         let chosenStartMs = 0;
@@ -533,6 +603,10 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
         // but cheap to guard against).
         occupied.add(`${slot.field}|${chosenIsoTime}`);
         recordCoachBusy(homeId, awayId, chosenStartMs, chosenEndMs);
+        if (maxGamesPerWeek !== null) {
+          recordWeeklyGame(homeId, weekKey);
+          recordWeeklyGame(awayId, weekKey);
+        }
       }
 
       if (targetReachedFor()) break;
@@ -591,6 +665,8 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
         game_duration_minutes: input.gameDurationMinutes,
         start_date: input.startDate,
         end_date: input.endDate,
+        max_games_per_week: maxGamesPerWeek,
+        week_start_day: weekStartDay,
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'division_id' }
@@ -604,6 +680,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
       blackoutsSkipped,
       fieldsReserved,
       coachConflictsAvoided,
+      weeklyCapDeferred,
       targetReached: targetReachedFor(),
     };
   } catch (err) {

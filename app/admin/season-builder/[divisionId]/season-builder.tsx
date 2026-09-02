@@ -49,6 +49,8 @@ interface SavedSettings {
   game_duration_minutes: number;
   start_date: string;
   end_date: string;
+  max_games_per_week: number | null;
+  week_start_day: number;
 }
 
 // Regroups a flat saved slot list back into the picker's per-day,
@@ -331,6 +333,10 @@ function ScheduleGenerator({
   );
   const [startDate, setStartDate] = useState(initialSettings?.start_date ?? '');
   const [endDate, setEndDate] = useState(initialSettings?.end_date ?? '');
+  const [maxGamesPerWeek, setMaxGamesPerWeek] = useState(
+    initialSettings?.max_games_per_week ? String(initialSettings.max_games_per_week) : ''
+  );
+  const [weekStartDay, setWeekStartDay] = useState(String(initialSettings?.week_start_day ?? 0));
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{
     gamesCreated: number;
@@ -340,6 +346,7 @@ function ScheduleGenerator({
     blackoutsSkipped: number;
     fieldsReserved: number;
     coachConflictsAvoided: number;
+    weeklyCapDeferred: number;
     targetReached: boolean;
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -446,6 +453,9 @@ function ScheduleGenerator({
   );
   const gamesPerTeamNum = Number(gamesPerTeam);
   const gameDurationNum = Number(gameDuration);
+  const maxGamesPerWeekNum = maxGamesPerWeek.trim() === '' ? null : Number(maxGamesPerWeek);
+  const maxGamesPerWeekValid =
+    maxGamesPerWeekNum === null || (Number.isFinite(maxGamesPerWeekNum) && maxGamesPerWeekNum >= 1);
   const canGenerate =
     teamCount >= 2 &&
     totalSlots > 0 &&
@@ -454,7 +464,8 @@ function ScheduleGenerator({
     Number.isFinite(gamesPerTeamNum) &&
     gamesPerTeamNum >= 1 &&
     Number.isFinite(gameDurationNum) &&
-    gameDurationNum >= 1;
+    gameDurationNum >= 1 &&
+    maxGamesPerWeekValid;
 
   async function handleGenerate() {
     setSubmitting(true);
@@ -473,6 +484,8 @@ function ScheduleGenerator({
         gameDurationMinutes: gameDurationNum,
         startDate,
         endDate,
+        maxGamesPerWeek: maxGamesPerWeekNum ?? undefined,
+        weekStartDay: Number(weekStartDay),
         // Read here (in the browser) rather than on the server, since the
         // server action runs on Vercel in UTC and has no idea what "5pm"
         // is supposed to mean for this league.
@@ -655,6 +668,34 @@ function ScheduleGenerator({
       <label className="form-label">Season end date (last possible day)</label>
       <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="form-input" />
 
+      <label className="form-label">Max games per week (optional)</label>
+      <input
+        type="number"
+        min={1}
+        value={maxGamesPerWeek}
+        onChange={(e) => setMaxGamesPerWeek(e.target.value)}
+        className="form-input"
+        placeholder="No limit"
+        style={{ maxWidth: 120 }}
+      />
+      <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -4, marginBottom: 12 }}>
+        Caps how many games any one team plays within a single week. If a team would otherwise be scheduled
+        for more, the extra game is pushed to a later week instead — leave blank for no limit.
+      </p>
+
+      <label className="form-label">Week starts on</label>
+      <select value={weekStartDay} onChange={(e) => setWeekStartDay(e.target.value)} className="form-input" style={{ maxWidth: 200 }}>
+        {DAY_NAMES.map((name, i) => (
+          <option key={i} value={i}>
+            {name}
+          </option>
+        ))}
+      </select>
+      <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -4, marginBottom: 12 }}>
+        Which day begins a &ldquo;week&rdquo; for the max-games-per-week limit above — e.g. Sunday for a Sun–Sat
+        week, or Monday for a Mon–Sun week. Only matters if you set a limit.
+      </p>
+
       {error && <p style={{ color: '#B23A2E', fontSize: 14 }}>{error}</p>}
       {result && (
         <>
@@ -671,6 +712,8 @@ function ScheduleGenerator({
               ` Skipped ${result.fieldsReserved} slot(s) reserved for a higher-priority division that hasn't been scheduled there yet.`}
             {result.coachConflictsAvoided > 0 &&
               ` Skipped ${result.coachConflictsAvoided} slot(s) that would have double-booked a coach on another team.`}
+            {result.weeklyCapDeferred > 0 &&
+              ` Pushed ${result.weeklyCapDeferred} game(s) to a later week to stay under the max-games-per-week limit.`}
           </p>
           {!result.targetReached && (
             <p style={{ color: '#B23A2E', fontSize: 13, marginTop: -4 }}>
