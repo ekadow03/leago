@@ -60,6 +60,21 @@ export default async function AdminSchedulePage() {
     .eq('organization_id', org.organizationId)
     .order('start_time', { ascending: true });
 
+  // For the "open slots" view on the schedule builder: each division's
+  // saved field/day/time grid from its last schedule-generator run (see
+  // migrations 0019/0024), and the season-level blackouts that grid has
+  // to respect. Both optional per division/season — a division that's
+  // never generated a schedule just won't have open slots to show.
+  const { data: scheduleSettings } = await supabase
+    .from('schedule_generation_settings')
+    .select('division_id, day_slots, games_per_team, game_duration_minutes, start_date, end_date, week_start_day, max_games_per_week')
+    .in('division_id', (divisions ?? []).map((d) => d.id));
+
+  const { data: blackouts } = await supabase
+    .from('blackouts')
+    .select('season_id, field_name, kind, blackout_date, end_date, days_of_week, day_of_week, start_time, end_time')
+    .in('season_id', (seasons ?? []).map((s) => s.id));
+
   return (
     <div className="admin-page">
       <Nav />
@@ -76,6 +91,8 @@ export default async function AdminSchedulePage() {
           divisions={divisions ?? []}
           teams={(teams as any) ?? []}
           initialEvents={events ?? []}
+          scheduleSettings={scheduleSettings ?? []}
+          blackouts={blackouts ?? []}
         />
       </div>
     </div>

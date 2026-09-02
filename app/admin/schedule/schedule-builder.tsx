@@ -31,6 +31,52 @@ interface Team {
   divisions?: { name: string } | null;
 }
 
+// Mirrors the shape auto-schedule.ts's generator reads/writes — see
+// migrations 0019/0024. Loaded here (read-only) so the schedule page can
+// show open slots from the same field/day/time grid the generator used,
+// without the admin having to re-describe it.
+interface DaySlot {
+  dayOfWeek: number; // 0 = Sunday .. 6 = Saturday
+  time: string; // "18:00" etc — 24hr
+  field: string;
+}
+
+interface DivisionScheduleSettingsRow {
+  division_id: string;
+  day_slots: DaySlot[];
+  games_per_team: number;
+  game_duration_minutes: number;
+  start_date: string;
+  end_date: string;
+  week_start_day: number;
+  max_games_per_week: number | null;
+}
+
+// Same shape as auto-schedule.ts's BlackoutRow (migration 0017/0025).
+interface BlackoutRow {
+  season_id: string;
+  field_name: string | null;
+  kind: 'date' | 'weekly' | 'daily';
+  blackout_date: string | null;
+  end_date: string | null;
+  days_of_week: number[] | null;
+  day_of_week: number | null;
+  start_time: string | null;
+  end_time: string | null;
+}
+
+// A configured field/day/time slot that doesn't have a game in it yet —
+// computed client-side from DivisionScheduleSettingsRow + BlackoutRow,
+// the same inputs/logic generateSeasonSchedule() itself walks.
+interface OpenSlot {
+  key: string;
+  date: Date;
+  time: string;
+  field: string;
+  startTimeIso: string;
+  weekNumber: number;
+}
+
 interface EventRow {
   id: string;
   type: string;
@@ -57,6 +103,100 @@ function toDatetimeLocal(iso: string) {
   const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// ---- Open-slot helpers, ported from lib/actions/auto-schedule.ts ----
+// (that file is 'use server', so its internals can't be imported into a
+// client component — these mirror its logic exactly; keep them in sync
+// if that file's slot/blackout handling ever changes).
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function dateKeyLocal(date: Date): string {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
+
+function getWeekKeyLocal(date: Date, weekStartDay: number): string {
+  const diff = (date.getDay() - weekStartDay + 7) % 7;
+  const weekStart = new Date(date);
+  weekStart.setDate(weekStart.getDate() - diff);
+  return `${weekStart.getFullYear()}-${pad2(weekStart.getMonth() + 1)}-${pad2(weekStart.getDate())}`;
+}
+
+// Converts a calendar date + wall-clock "HH:MM" into the correct UTC
+// instant for a given IANA timezone — same round-trip technique as
+// auto-schedule.ts's zonedDateTimeToIso.
+function zonedDateTimeToIso(date: Date, time: string, timeZone: string): string {
+  const [hours, minutes] = time.split(':').map(Number);
+  const year = date.getFullYear();
+  const month = date.getMonth();
+  const day = date.getDate();
+
+  const guessMs = Date.UTC(year, month, day, hours, minutes, 0);
+
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+
+  const parts: Record<string, string> = {};
+  for (const part of dtf.formatToParts(new Date(guessMs))) {
+    if (part.type !== 'literal') parts[part.type] = part.value;
+  }
+
+  const renderedAsUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    parts.hour === '24' ? 0 : Number(parts.hour),
+    Number(parts.minute),
+    Number(parts.second)
+  );
+
+  const offsetMs = renderedAsUtc - guessMs;
+  return new Date(guessMs - offsetMs).toISOString();
+}
+
+function isSlotBlackedOut(date: Date, time: string, field: string, blackouts: BlackoutRow[], timeZone: string): boolean {
+  if (blackouts.length === 0) return false;
+
+  const dateStr = dateKeyLocal(date);
+  const slotMs = new Date(zonedDateTimeToIso(date, time, timeZone)).getTime();
+
+  for (const b of blackouts) {
+    if (b.field_name && b.field_name.toLowerCase() !== field.toLowerCase()) continue;
+
+    let dayMatches = false;
+    if (b.kind === 'date' && b.end_date) {
+      dayMatches =
+        dateStr >= b.blackout_date! &&
+        dateStr <= b.end_date &&
+        (!b.days_of_week || b.days_of_week.length === 0 || b.days_of_week.includes(date.getDay()));
+    } else if (b.kind === 'date') {
+      dayMatches = b.blackout_date === dateStr;
+    } else if (b.kind === 'weekly') {
+      dayMatches = b.day_of_week === date.getDay();
+    } else if (b.kind === 'daily') {
+      dayMatches = true;
+    }
+    if (!dayMatches) continue;
+
+    if (!b.start_time || !b.end_time) return true;
+
+    const startMs = new Date(zonedDateTimeToIso(date, b.start_time, timeZone)).getTime();
+    const endMs = new Date(zonedDateTimeToIso(date, b.end_time, timeZone)).getTime();
+    if (slotMs >= startMs && slotMs < endMs) return true;
+  }
+
+  return false;
 }
 
 // GameChanger's League Bulk Schedule Import expects date/time/home/away/
@@ -111,6 +251,8 @@ export default function ScheduleBuilder({
   divisions,
   teams,
   initialEvents,
+  scheduleSettings,
+  blackouts,
 }: {
   organizationId: string;
   organizationName: string;
@@ -118,6 +260,8 @@ export default function ScheduleBuilder({
   divisions: Division[];
   teams: Team[];
   initialEvents: EventRow[];
+  scheduleSettings: DivisionScheduleSettingsRow[];
+  blackouts: BlackoutRow[];
 }) {
   const [events, setEvents] = useState(initialEvents);
   const [error, setError] = useState<string | null>(null);
@@ -154,6 +298,20 @@ export default function ScheduleBuilder({
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverWeekKey, setDragOverWeekKey] = useState<number | null | undefined>(undefined);
   const [dragOverRowId, setDragOverRowId] = useState<string | null>(null);
+
+  // Open slots: a toggleable view of a single division's configured
+  // field/day/time grid (from its last schedule-generator run) with
+  // already-used slots subtracted out, so an admin can see gaps and fill
+  // them by dragging an existing draft game there, or by dragging in a
+  // team that hasn't hit its target game count yet and picking an
+  // opponent.
+  const [showOpenSlots, setShowOpenSlots] = useState(false);
+  const [draggedTeamId, setDraggedTeamId] = useState<string | null>(null);
+  // slot key -> team dropped in as the proposed home team, awaiting an
+  // opponent pick before a game actually gets created.
+  const [slotDraftHome, setSlotDraftHome] = useState<Record<string, string>>({});
+  const [slotOpponentChoice, setSlotOpponentChoice] = useState<Record<string, string>>({});
+  const [creatingSlotKey, setCreatingSlotKey] = useState<string | null>(null);
 
   const divisionsForSeason = divisions.filter((d) => d.season_id === selectedSeasonId);
 
@@ -210,11 +368,112 @@ export default function ScheduleBuilder({
     if (!weekGroups.has(key)) weekGroups.set(key, []);
     weekGroups.get(key)!.push(ev);
   }
-  const sortedWeekKeys = Array.from(weekGroups.keys()).sort((a, b) => {
-    if (a === null) return 1;
-    if (b === null) return -1;
-    return a - b;
-  });
+  // Open slots (see the toggle button below): every configured field/
+  // day/time slot for the selected division's season, minus anything
+  // already blacked out or already occupied by a non-canceled event
+  // anywhere in the org (fields can be shared across divisions — see
+  // migration 0018 — so another division's game on that field at that
+  // instant counts as taken too). Only computed when a single division
+  // is picked and its schedule generator has been run at least once
+  // (that's what schedule_generation_settings requires).
+  const selectedDivisionSettings = selectedDivisionId
+    ? scheduleSettings.find((s) => s.division_id === selectedDivisionId) ?? null
+    : null;
+
+  const openSlots: OpenSlot[] = [];
+  let shortTeams: { teamId: string; teamName: string; needed: number }[] = [];
+
+  if (showOpenSlots && selectedDivisionId && selectedDivisionSettings) {
+    const settings = selectedDivisionSettings;
+    const timeZone = typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC';
+
+    const slotsByDay = new Map<number, DaySlot[]>();
+    for (const slot of settings.day_slots ?? []) {
+      const list = slotsByDay.get(slot.dayOfWeek) ?? [];
+      list.push(slot);
+      slotsByDay.set(slot.dayOfWeek, list);
+    }
+    for (const list of slotsByDay.values()) list.sort((a, b) => a.time.localeCompare(b.time));
+
+    const gameDates: Date[] = [];
+    const cursor = new Date(settings.start_date + 'T00:00:00');
+    const end = new Date(settings.end_date + 'T00:00:00');
+    while (cursor <= end) {
+      if (slotsByDay.has(cursor.getDay())) gameDates.push(new Date(cursor));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    // Same 1-based, chronological week numbering generateSeasonSchedule()
+    // itself stamps onto week_number, so open slots land in the same
+    // week sections as the real games already there.
+    const weekNumberByDateKey = new Map<string, number>();
+    {
+      let nextWeekNumber = 0;
+      let lastWeekKey: string | null = null;
+      for (const date of gameDates) {
+        const wk = getWeekKeyLocal(date, settings.week_start_day);
+        if (wk !== lastWeekKey) {
+          nextWeekNumber++;
+          lastWeekKey = wk;
+        }
+        weekNumberByDateKey.set(dateKeyLocal(date), nextWeekNumber);
+      }
+    }
+
+    const divisionSeasonId = divisions.find((d) => d.id === selectedDivisionId)?.season_id ?? selectedSeasonId;
+    const divisionBlackouts = blackouts.filter((b) => b.season_id === divisionSeasonId);
+
+    const occupied = new Set<string>();
+    for (const ev of events) {
+      if (ev.status === 'canceled' || !ev.location) continue;
+      occupied.add(`${ev.start_time}|${ev.location.toLowerCase()}`);
+    }
+
+    for (const date of gameDates) {
+      const slots = slotsByDay.get(date.getDay()) ?? [];
+      for (const slot of slots) {
+        if (isSlotBlackedOut(date, slot.time, slot.field, divisionBlackouts, timeZone)) continue;
+        const startTimeIso = zonedDateTimeToIso(date, slot.time, timeZone);
+        if (occupied.has(`${startTimeIso}|${slot.field.toLowerCase()}`)) continue;
+        openSlots.push({
+          key: `${selectedDivisionId}|${dateKeyLocal(date)}|${slot.time}|${slot.field}`,
+          date,
+          time: slot.time,
+          field: slot.field,
+          startTimeIso,
+          weekNumber: weekNumberByDateKey.get(dateKeyLocal(date)) ?? 0,
+        });
+      }
+    }
+
+    const gameCounts = new Map<string, number>();
+    for (const ev of events) {
+      if (ev.division_id !== selectedDivisionId || ev.type !== 'game' || ev.status === 'canceled') continue;
+      if (ev.home_team_id) gameCounts.set(ev.home_team_id, (gameCounts.get(ev.home_team_id) ?? 0) + 1);
+      if (ev.away_team_id) gameCounts.set(ev.away_team_id, (gameCounts.get(ev.away_team_id) ?? 0) + 1);
+    }
+    shortTeams = teams
+      .filter((t) => t.division_id === selectedDivisionId)
+      .map((t) => ({ teamId: t.id, teamName: t.name, needed: settings.games_per_team - (gameCounts.get(t.id) ?? 0) }))
+      .filter((t) => t.needed > 0)
+      .sort((a, b) => b.needed - a.needed);
+  }
+
+  const openSlotsByWeek = new Map<number, OpenSlot[]>();
+  for (const slot of openSlots) {
+    const list = openSlotsByWeek.get(slot.weekNumber) ?? [];
+    list.push(slot);
+    openSlotsByWeek.set(slot.weekNumber, list);
+  }
+  for (const list of openSlotsByWeek.values()) list.sort((a, b) => a.startTimeIso.localeCompare(b.startTimeIso));
+
+  const sortedWeekKeys = Array.from(new Set<number | null>([...weekGroups.keys(), ...openSlotsByWeek.keys()])).sort(
+    (a, b) => {
+      if (a === null) return 1;
+      if (b === null) return -1;
+      return a - b;
+    }
+  );
 
   // Quick balance check: is every team getting a roughly even split of
   // home vs. away games, and is each team facing every other team in its
@@ -850,6 +1109,136 @@ export default function ScheduleBuilder({
     moveToWeek(sourceId, weekKey);
   }
 
+  function clearSlotDraft(slotKey: string) {
+    setSlotDraftHome((prev) => {
+      const next = { ...prev };
+      delete next[slotKey];
+      return next;
+    });
+    setSlotOpponentChoice((prev) => {
+      const next = { ...prev };
+      delete next[slotKey];
+      return next;
+    });
+  }
+
+  // Drag an existing draft game onto an open slot: its date/time and
+  // field now match the slot (and its week label follows along), same
+  // conflict-check flow as any other edit.
+  async function moveEventToSlot(eventId: string, slot: OpenSlot) {
+    setError(null);
+    const previous = events.find((ev) => ev.id === eventId);
+    if (!previous) return;
+    const prevSnapshot = { start_time: previous.start_time, location: previous.location, week_number: previous.week_number };
+    setEvents((prev) =>
+      prev.map((ev) =>
+        ev.id === eventId ? { ...ev, start_time: slot.startTimeIso, location: slot.field, week_number: slot.weekNumber } : ev
+      )
+    );
+    const result = await updateWithConflictConfirm({
+      organizationId,
+      eventId,
+      startTime: slot.startTimeIso,
+      location: slot.field,
+      weekNumber: slot.weekNumber,
+    });
+    if ('error' in result) {
+      setError(result.error);
+      setEvents((prev) => prev.map((ev) => (ev.id === eventId ? { ...ev, ...prevSnapshot } : ev)));
+      return;
+    }
+    if ('cancelled' in result) {
+      setEvents((prev) => prev.map((ev) => (ev.id === eventId ? { ...ev, ...prevSnapshot } : ev)));
+    }
+  }
+
+  async function createWithConflictConfirm(
+    input: Parameters<typeof createEvent>[0]
+  ): Promise<{ id: string } | { error: string } | { cancelled: true }> {
+    const result = await createEvent(input);
+    if ('conflicts' in result) {
+      if (confirm(describeConflicts(result.conflicts))) {
+        return createWithConflictConfirm({ ...input, allowConflicts: true });
+      }
+      return { cancelled: true };
+    }
+    return result;
+  }
+
+  // The second half of filling an open slot with a team dragged in: once
+  // an opponent is picked from the dropdown, actually create the game.
+  async function handleCreateGameForSlot(slot: OpenSlot, homeTeamId: string, awayTeamId: string | undefined) {
+    if (!awayTeamId) return;
+    setError(null);
+    setCreatingSlotKey(slot.key);
+    try {
+      const homeName = teams.find((t) => t.id === homeTeamId)?.name ?? 'Home';
+      const awayName = teams.find((t) => t.id === awayTeamId)?.name ?? 'Away';
+      const result = await createWithConflictConfirm({
+        organizationId,
+        seasonId: selectedSeasonId || undefined,
+        divisionId: selectedDivisionId || undefined,
+        type: 'game',
+        title: `${homeName} vs ${awayName}`,
+        location: slot.field,
+        startTime: slot.startTimeIso,
+        homeTeamId,
+        awayTeamId,
+        weekNumber: slot.weekNumber,
+      });
+      if ('error' in result) {
+        setError(result.error);
+        return;
+      }
+      if ('cancelled' in result) return;
+      setEvents((prev) => [
+        ...prev,
+        {
+          id: result.id,
+          type: 'game',
+          title: `${homeName} vs ${awayName}`,
+          location: slot.field,
+          start_time: slot.startTimeIso,
+          end_time: null,
+          status: 'draft',
+          season_id: selectedSeasonId || null,
+          division_id: selectedDivisionId || null,
+          home_team_id: homeTeamId,
+          away_team_id: awayTeamId,
+          week_number: slot.weekNumber,
+        },
+      ]);
+      clearSlotDraft(slot.key);
+    } finally {
+      setCreatingSlotKey(null);
+    }
+  }
+
+  // A drop on an open slot means one of two things: dragging in a team
+  // that still needs a game (stages it as the proposed home team, see
+  // renderOpenSlotRow) or dragging in an existing draft game (moves it
+  // straight into the slot).
+  function handleDropOnSlot(e: React.DragEvent, slot: OpenSlot) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverWeekKey(undefined);
+    setDragOverRowId(null);
+
+    if (draggedTeamId) {
+      const teamId = draggedTeamId;
+      setDraggedTeamId(null);
+      setSlotDraftHome((prev) => ({ ...prev, [slot.key]: teamId }));
+      return;
+    }
+
+    const sourceId = draggedId;
+    setDraggedId(null);
+    if (!sourceId) return;
+    const source = events.find((ev) => ev.id === sourceId);
+    if (!source || source.status === 'published') return;
+    moveEventToSlot(sourceId, slot);
+  }
+
   function renderEventRow(ev: EventRow) {
     if (editingId === ev.id) {
       return (
@@ -966,6 +1355,78 @@ export default function ScheduleBuilder({
     );
   }
 
+  function renderOpenSlotRow(slot: OpenSlot) {
+    const homeTeamId = slotDraftHome[slot.key];
+    const homeTeam = homeTeamId ? teams.find((t) => t.id === homeTeamId) : null;
+    const isDropTarget = (Boolean(draggedId) || Boolean(draggedTeamId)) && dragOverRowId === slot.key;
+
+    return (
+      <div
+        key={slot.key}
+        className="data-row"
+        onDragOver={(e) => {
+          if (draggedId || draggedTeamId) {
+            e.preventDefault();
+            if (dragOverRowId !== slot.key) setDragOverRowId(slot.key);
+          }
+        }}
+        onDragLeave={() => setDragOverRowId((id) => (id === slot.key ? null : id))}
+        onDrop={(e) => handleDropOnSlot(e, slot)}
+        style={{
+          border: '1px dashed var(--border)',
+          background: isDropTarget ? 'var(--gray-light)' : undefined,
+          outline: isDropTarget ? '2px solid var(--blue)' : undefined,
+          outlineOffset: -2,
+          borderRadius: 8,
+        }}
+      >
+        <div>
+          <div className="data-row-name" style={{ color: 'var(--gray)' }}>
+            {homeTeam ? (
+              <>
+                {homeTeam.name} vs{' '}
+                <select
+                  value={slotOpponentChoice[slot.key] ?? ''}
+                  onChange={(e) => setSlotOpponentChoice((prev) => ({ ...prev, [slot.key]: e.target.value }))}
+                  className="form-input"
+                  style={{ display: 'inline-block', width: 'auto', marginBottom: 0 }}
+                >
+                  <option value="">Pick opponent…</option>
+                  {shortTeams
+                    .filter((t) => t.teamId !== homeTeamId)
+                    .map((t) => (
+                      <option key={t.teamId} value={t.teamId}>
+                        {t.teamName} (needs {t.needed} more)
+                      </option>
+                    ))}
+                </select>
+              </>
+            ) : (
+              'Open slot — drag a team or a draft game here'
+            )}
+          </div>
+          <div className="data-row-meta">
+            {slot.date.toLocaleDateString()} {slot.time} · {slot.field}
+          </div>
+        </div>
+        {homeTeam && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button
+              onClick={() => handleCreateGameForSlot(slot, homeTeamId, slotOpponentChoice[slot.key])}
+              disabled={!slotOpponentChoice[slot.key] || creatingSlotKey === slot.key}
+              className="btn-primary"
+            >
+              {creatingSlotKey === slot.key ? 'Creating…' : 'Create game'}
+            </button>
+            <button onClick={() => clearSlotDraft(slot.key)} className="btn-small">
+              Clear
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   const allVisibleSelected =
     filteredEvents.length > 0 && filteredEvents.every((ev) => selectedIds.has(ev.id));
 
@@ -1014,6 +1475,13 @@ export default function ScheduleBuilder({
             </button>
             <button onClick={() => setShowBalanceReport((s) => !s)} className="btn-small" style={{ marginLeft: 'auto' }}>
               {showBalanceReport ? 'Hide balance report' : 'Balance report'}
+            </button>
+            <button
+              onClick={() => setShowOpenSlots((s) => !s)}
+              className="btn-small"
+              title={!selectedDivisionId ? 'Pick a single division above to see its open slots' : undefined}
+            >
+              {showOpenSlots ? 'Hide open slots' : 'Open slots'}
             </button>
             <button onClick={() => setShowForm((s) => !s)} className="btn-small">
               {showForm ? 'Cancel' : '+ Add event'}
@@ -1115,6 +1583,51 @@ export default function ScheduleBuilder({
             </div>
           )}
 
+          {showOpenSlots && (
+            <div className="form-card" style={{ marginBottom: 24 }}>
+              {!selectedDivisionId ? (
+                <p style={{ color: 'var(--gray)' }}>Pick a single division above (not &quot;All divisions&quot;) to see its open slots.</p>
+              ) : !selectedDivisionSettings ? (
+                <p style={{ color: 'var(--gray)' }}>
+                  This division hasn&apos;t generated a schedule yet, so there&apos;s no saved field/day/time
+                  configuration to show open slots for.
+                </p>
+              ) : (
+                <>
+                  <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -4, marginBottom: 12 }}>
+                    Drag a team below onto an open slot in the list to start a game there, then pick its opponent
+                    to create it. Drag an existing draft game onto an open slot to move it there instead — its
+                    date, time, and field all update to match.
+                  </p>
+                  {shortTeams.length === 0 ? (
+                    <p style={{ color: 'var(--gray)', fontSize: 13 }}>
+                      Every team in this division has already reached its target game count.
+                    </p>
+                  ) : (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {shortTeams.map((t) => (
+                        <div
+                          key={t.teamId}
+                          draggable
+                          onDragStart={(e) => {
+                            setDraggedTeamId(t.teamId);
+                            e.dataTransfer.effectAllowed = 'copy';
+                            e.dataTransfer.setData('text/plain', t.teamId);
+                          }}
+                          onDragEnd={() => setDraggedTeamId(null)}
+                          className="status-badge pending"
+                          style={{ cursor: 'grab', padding: '6px 12px' }}
+                        >
+                          {t.teamName} · needs {t.needed} more
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
           {showForm && (
             <form onSubmit={handleCreate} className="form-card" style={{ marginBottom: 24 }}>
               {type === 'game' && (
@@ -1173,8 +1686,8 @@ export default function ScheduleBuilder({
             </form>
           )}
 
-          {filteredEvents.length === 0 && <p style={{ color: 'var(--gray)' }}>No events yet.</p>}
-          {filteredEvents.length > 0 && (
+          {filteredEvents.length === 0 && openSlots.length === 0 && <p style={{ color: 'var(--gray)' }}>No events yet.</p>}
+          {(filteredEvents.length > 0 || openSlots.length > 0) && (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--gray)' }}>
@@ -1219,7 +1732,10 @@ export default function ScheduleBuilder({
                   <h3 style={{ fontSize: 14, color: 'var(--gray)', marginBottom: 8 }}>
                     {weekKey === null ? 'Unscheduled / manually added' : `Week ${weekKey}`}
                   </h3>
-                  <div className="data-table-card">{weekGroups.get(weekKey)!.map((ev) => renderEventRow(ev))}</div>
+                  <div className="data-table-card">
+                    {(weekGroups.get(weekKey) ?? []).map((ev) => renderEventRow(ev))}
+                    {weekKey !== null && (openSlotsByWeek.get(weekKey) ?? []).map((slot) => renderOpenSlotRow(slot))}
+                  </div>
                 </div>
                 );
               })}
