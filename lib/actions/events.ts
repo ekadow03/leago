@@ -2,7 +2,7 @@
 
 // lib/actions/events.ts
 //
-// All four actions return { error } instead of throwing, and wrap their
+// All actions return { error } instead of throwing, and wrap their
 // whole body in a try/catch — see the comment in lib/actions/onboarding.ts
 // for why (Next.js redacts thrown Server Action error messages in
 // production builds, and an unanticipated exception needs catching too,
@@ -10,6 +10,13 @@
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOrgPermission } from '@/lib/org-context';
+import { findCoachConflictsForEvent, type CoachConflict } from '@/lib/scheduling-conflicts';
+
+// No gameDurationMinutes input exists at this single-event granularity
+// (that's an auto-schedule.ts-only concept) — used only to give an
+// event with no end_time a reasonable window to check for coach
+// conflicts against, same idea as auto-schedule.ts's fallback.
+const DEFAULT_EVENT_DURATION_MS = 60 * 60 * 1000;
 
 interface CreateEventInput {
   organizationId: string;
@@ -23,9 +30,13 @@ interface CreateEventInput {
   homeTeamId?: string;
   awayTeamId?: string;
   notes?: string;
+  // Set after the caller has shown the user the conflicts from a first
+  // call (see the { conflicts } branch below) and they chose to proceed
+  // anyway — e.g. a co-coach genuinely covering two teams at once.
+  allowConflicts?: boolean;
 }
 
-type CreateEventResult = { id: string } | { error: string };
+type CreateEventResult = { id: string } | { error: string } | { conflicts: CoachConflict[] };
 
 function unexpectedError(err: unknown): { error: string } {
   return { error: err instanceof Error ? `Unexpected server error: ${err.message}` : 'Unexpected server error.' };
@@ -39,6 +50,19 @@ export async function createEvent(input: CreateEventInput): Promise<CreateEventR
     }
 
     const admin = createAdminClient();
+
+    if (!input.allowConflicts && (input.homeTeamId || input.awayTeamId)) {
+      const conflicts = await findCoachConflictsForEvent(admin, input.organizationId, {
+        startTime: input.startTime,
+        endTime: input.endTime ?? null,
+        homeTeamId: input.homeTeamId ?? null,
+        awayTeamId: input.awayTeamId ?? null,
+        fallbackDurationMs: DEFAULT_EVENT_DURATION_MS,
+      });
+      if (conflicts.length > 0) {
+        return { conflicts };
+      }
+    }
 
     const { data, error } = await admin
       .from('events')
@@ -190,9 +214,11 @@ interface UpdateEventInput {
   homeTeamId?: string | null;
   awayTeamId?: string | null;
   weekNumber?: number | null;
+  // See CreateEventInput.allowConflicts.
+  allowConflicts?: boolean;
 }
 
-type UpdateEventResult = { ok: true } | { error: string };
+type UpdateEventResult = { ok: true } | { error: string } | { conflicts: CoachConflict[] };
 
 /** Manual edit for an existing event — the generator and the single-add
  * form only ever create events, so this is the only way to change a
@@ -204,6 +230,39 @@ export async function updateEvent(input: UpdateEventInput): Promise<UpdateEventR
     const authorized = await requireOrgPermission(input.organizationId, 'manage_schedule');
     if (!authorized) {
       return { error: 'You do not have permission to edit events.' };
+    }
+
+    const admin = createAdminClient();
+
+    // A coach conflict check needs the event's full resulting
+    // start_time/home/away — not just whichever fields this particular
+    // edit touches — so read the current row and merge the patch onto it
+    // before checking, rather than checking only what changed.
+    if (!input.allowConflicts && (input.startTime !== undefined || input.homeTeamId !== undefined || input.awayTeamId !== undefined)) {
+      const { data: current } = await admin
+        .from('events')
+        .select('start_time, end_time, home_team_id, away_team_id')
+        .eq('id', input.eventId)
+        .eq('organization_id', input.organizationId)
+        .single();
+
+      if (current) {
+        const homeTeamId = input.homeTeamId !== undefined ? input.homeTeamId : current.home_team_id;
+        const awayTeamId = input.awayTeamId !== undefined ? input.awayTeamId : current.away_team_id;
+        const startTime = input.startTime !== undefined ? input.startTime : current.start_time;
+
+        const conflicts = await findCoachConflictsForEvent(admin, input.organizationId, {
+          excludeEventId: input.eventId,
+          startTime,
+          endTime: current.end_time,
+          homeTeamId,
+          awayTeamId,
+          fallbackDurationMs: DEFAULT_EVENT_DURATION_MS,
+        });
+        if (conflicts.length > 0) {
+          return { conflicts };
+        }
+      }
     }
 
     const patch: Record<string, unknown> = {};
@@ -218,7 +277,6 @@ export async function updateEvent(input: UpdateEventInput): Promise<UpdateEventR
       return { ok: true };
     }
 
-    const admin = createAdminClient();
     const { error } = await admin
       .from('events')
       .update(patch)

@@ -3,6 +3,15 @@
 
 import { useState } from 'react';
 import { createEvent, setEventStatus, publishAllDraftEvents, deleteEvent, deleteEvents, updateEvent } from '@/lib/actions/events';
+import type { CoachConflict } from '@/lib/scheduling-conflicts';
+
+function describeConflicts(conflicts: CoachConflict[]): string {
+  const lines = conflicts.map(
+    (c) =>
+      `${c.personName} is already coaching "${c.conflictingEventTitle}" at ${new Date(c.conflictingStart).toLocaleString()}.`
+  );
+  return `This double-books a coach:\n\n${lines.join('\n')}\n\nCreate it anyway?`;
+}
 
 interface Season {
   id: string;
@@ -163,7 +172,7 @@ export default function ScheduleBuilder({
     setSelectedIds(new Set());
   }
 
-  async function handleCreate(e: React.FormEvent) {
+  async function handleCreate(e: React.FormEvent, allowConflicts = false) {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
@@ -177,7 +186,15 @@ export default function ScheduleBuilder({
         startTime: new Date(startTime).toISOString(),
         homeTeamId: type === 'game' ? homeTeamId || undefined : undefined,
         awayTeamId: type === 'game' ? awayTeamId || undefined : undefined,
+        allowConflicts,
       });
+      if ('conflicts' in result) {
+        setSubmitting(false);
+        if (confirm(describeConflicts(result.conflicts))) {
+          handleCreate(e, true);
+        }
+        return;
+      }
       if ('error' in result) {
         setError(result.error);
         return;
@@ -496,7 +513,7 @@ export default function ScheduleBuilder({
     setEditingId(null);
   }
 
-  async function handleSaveEdit(eventId: string) {
+  async function handleSaveEdit(eventId: string, allowConflicts = false) {
     setError(null);
     setSavingEdit(true);
     try {
@@ -510,7 +527,15 @@ export default function ScheduleBuilder({
         homeTeamId: editHomeTeamId || null,
         awayTeamId: editAwayTeamId || null,
         weekNumber: Number.isFinite(weekNumberNum as number) ? weekNumberNum : null,
+        allowConflicts,
       });
+      if ('conflicts' in result) {
+        setSavingEdit(false);
+        if (confirm(describeConflicts(result.conflicts))) {
+          handleSaveEdit(eventId, true);
+        }
+        return;
+      }
       if ('error' in result) {
         setError(result.error);
         return;

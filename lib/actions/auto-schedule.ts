@@ -29,6 +29,7 @@
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOrgPermission } from '@/lib/org-context';
+import { getOrgTeamCoaches, buildCoachBusyIntervals, intervalsOverlap, type BusyInterval } from '@/lib/scheduling-conflicts';
 
 interface DaySlotInput {
   dayOfWeek: number; // 0 = Sunday .. 6 = Saturday
@@ -182,6 +183,7 @@ type GenerateScheduleResult =
       conflictsAvoided: number;
       blackoutsSkipped: number;
       fieldsReserved: number;
+      coachConflictsAvoided: number;
       targetReached: boolean;
     }
   | { error: string };
@@ -258,7 +260,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     // other division's events, draft or published) still block. ----
     const { data: existingEvents } = await admin
       .from('events')
-      .select('location, start_time, division_id, status')
+      .select('id, title, location, start_time, end_time, division_id, status, home_team_id, away_team_id')
       .eq('organization_id', input.organizationId)
       .neq('status', 'canceled')
       .not('location', 'is', null)
@@ -269,6 +271,48 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
       (e) => !(e.division_id === input.divisionId && e.status === 'draft')
     );
     const occupied = new Set(relevantExistingEvents.map((e) => `${e.location}|${e.start_time}`));
+
+    // ---- Step 2d: coach conflicts (0023_team_staff.sql) — a coach can
+    // staff more than one team, including teams in OTHER divisions, so
+    // this has to know about every team in the org, not just this
+    // division's. Excludes this division's own draft games from the
+    // "existing commitments" set for the same reason Step 2 does: they're
+    // about to be replaced, not real conflicts to avoid. Extended with
+    // this run's own placements as they're made below, so two games
+    // created in the SAME generation call (e.g. a coach on two teams
+    // within this division) can't double-book each other either. ----
+    const teamCoaches = await getOrgTeamCoaches(admin, input.organizationId);
+    const busyByPerson = buildCoachBusyIntervals(
+      relevantExistingEvents as {
+        id: string;
+        title: string;
+        start_time: string;
+        end_time: string | null;
+        home_team_id: string | null;
+        away_team_id: string | null;
+      }[],
+      teamCoaches,
+      input.gameDurationMinutes * 60000
+    );
+
+    function coachConflictAt(homeId: string, awayId: string, startMs: number, endMs: number): boolean {
+      const coachIds = new Set<string>([...(teamCoaches.get(homeId) ?? []), ...(teamCoaches.get(awayId) ?? [])]);
+      for (const personId of coachIds) {
+        for (const busy of busyByPerson.get(personId) ?? []) {
+          if (intervalsOverlap(startMs, endMs, busy.start, busy.end)) return true;
+        }
+      }
+      return false;
+    }
+
+    function recordCoachBusy(homeId: string, awayId: string, startMs: number, endMs: number): void {
+      const coachIds = new Set<string>([...(teamCoaches.get(homeId) ?? []), ...(teamCoaches.get(awayId) ?? [])]);
+      for (const personId of coachIds) {
+        const list: BusyInterval[] = busyByPerson.get(personId) ?? [];
+        list.push({ start: startMs, end: endMs, eventId: 'pending', eventTitle: 'Game' });
+        busyByPerson.set(personId, list);
+      }
+    }
 
     // ---- Step 2b: this season's blackouts (migration 0017) — holidays,
     // field closures, standing conflicts. Scoped to the season, not the
@@ -387,6 +431,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     let conflictsAvoided = 0;
     let blackoutsSkipped = 0;
     let fieldsReserved = 0;
+    let coachConflictsAvoided = 0;
     let weekNumber = 1; // round 0 is already "week" 1
 
     const gamesPlayed = new Map<string, number>(teamIds.map((id) => [id, 0]));
@@ -418,11 +463,52 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
         weekNumber++;
       }
 
-      const forThisDate = pendingMatchups.splice(0, availableSlots.length);
-      forThisDate.forEach(([homeId, awayId], i) => {
-        const slot = availableSlots[i];
-        const isoTime = zonedDateTimeToIso(date, slot.time, timeZone);
-        const endIso = new Date(new Date(isoTime).getTime() + input.gameDurationMinutes * 60000).toISOString();
+      // Pair today's matchups with today's slots one at a time (not a
+      // fixed positional zip) — a coach on two teams means SOME matchup
+      // in this round may not have a conflict-free slot today at all, in
+      // which case it's deferred to the next game date instead of
+      // silently double-booking them. usedSlotIndices tracks which of
+      // today's slots another matchup already claimed.
+      const matchupsToTry = [...pendingMatchups];
+      pendingMatchups = [];
+      const usedSlotIndices = new Set<number>();
+
+      for (const [homeId, awayId] of matchupsToTry) {
+        let chosenSlotIndex: number | null = null;
+        let chosenIsoTime = '';
+        let chosenStartMs = 0;
+        let chosenEndMs = 0;
+
+        for (let i = 0; i < availableSlots.length; i++) {
+          if (usedSlotIndices.has(i)) continue;
+          const slot = availableSlots[i];
+          const isoTime = zonedDateTimeToIso(date, slot.time, timeZone);
+          const startMs = new Date(isoTime).getTime();
+          const endMs = startMs + input.gameDurationMinutes * 60000;
+
+          if (coachConflictAt(homeId, awayId, startMs, endMs)) {
+            coachConflictsAvoided++;
+            continue;
+          }
+
+          chosenSlotIndex = i;
+          chosenIsoTime = isoTime;
+          chosenStartMs = startMs;
+          chosenEndMs = endMs;
+          break;
+        }
+
+        if (chosenSlotIndex === null) {
+          // No conflict-free slot today for this matchup — try again on
+          // a later date rather than forcing a coach into two games at
+          // once.
+          pendingMatchups.push([homeId, awayId]);
+          continue;
+        }
+
+        usedSlotIndices.add(chosenSlotIndex);
+        const slot = availableSlots[chosenSlotIndex];
+        const endIso = new Date(chosenEndMs).toISOString();
 
         eventsToInsert.push({
           organization_id: input.organizationId,
@@ -431,7 +517,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
           type: 'game',
           title: 'Game',
           location: slot.field,
-          start_time: isoTime,
+          start_time: chosenIsoTime,
           end_time: endIso,
           home_team_id: homeId,
           away_team_id: awayId,
@@ -445,8 +531,9 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
         // Reserve this slot for the rest of this generation run too, in
         // case it's reachable more than once (shouldn't normally happen,
         // but cheap to guard against).
-        occupied.add(`${slot.field}|${isoTime}`);
-      });
+        occupied.add(`${slot.field}|${chosenIsoTime}`);
+        recordCoachBusy(homeId, awayId, chosenStartMs, chosenEndMs);
+      }
 
       if (targetReachedFor()) break;
     }
@@ -516,6 +603,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
       conflictsAvoided,
       blackoutsSkipped,
       fieldsReserved,
+      coachConflictsAvoided,
       targetReached: targetReachedFor(),
     };
   } catch (err) {

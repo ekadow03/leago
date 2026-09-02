@@ -60,7 +60,7 @@ export default async function DraftPage({
 
   const { data: teams } = await supabase
     .from('teams')
-    .select('id, name, coach_person_id')
+    .select('id, name')
     .eq('division_id', divisionId);
 
   const { data: registrations } = await supabase

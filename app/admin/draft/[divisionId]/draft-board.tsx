@@ -9,7 +9,6 @@ import { getCurrentPick } from '@/lib/draft-logic';
 interface Team {
   id: string;
   name: string;
-  coach_person_id: string | null;
 }
 
 interface Registration {

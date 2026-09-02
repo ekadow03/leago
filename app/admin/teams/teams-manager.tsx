@@ -413,7 +413,9 @@ function DivisionTeamsCard({
         <div className="chip-list" style={{ marginTop: 12 }}>
           {teams.map((t) => (
             <span key={t.id} className="chip">
-              {t.name}
+              <Link href={`/admin/teams/${t.id}`} style={{ color: 'inherit', textDecoration: 'none' }}>
+                {t.name}
+              </Link>
               <button type="button" onClick={() => handleRemoveTeam(t)} disabled={removingId === t.id}>
                 ×
               </button>

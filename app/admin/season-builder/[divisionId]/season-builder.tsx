@@ -339,6 +339,7 @@ function ScheduleGenerator({
     conflictsAvoided: number;
     blackoutsSkipped: number;
     fieldsReserved: number;
+    coachConflictsAvoided: number;
     targetReached: boolean;
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -668,6 +669,8 @@ function ScheduleGenerator({
               ` Skipped ${result.blackoutsSkipped} slot(s) blocked by a blackout.`}
             {result.fieldsReserved > 0 &&
               ` Skipped ${result.fieldsReserved} slot(s) reserved for a higher-priority division that hasn't been scheduled there yet.`}
+            {result.coachConflictsAvoided > 0 &&
+              ` Skipped ${result.coachConflictsAvoided} slot(s) that would have double-booked a coach on another team.`}
           </p>
           {!result.targetReached && (
             <p style={{ color: '#B23A2E', fontSize: 13, marginTop: -4 }}>
