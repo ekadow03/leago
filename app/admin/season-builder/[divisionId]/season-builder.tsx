@@ -387,6 +387,7 @@ function ScheduleGenerator({
     fieldsReserved: number;
     coachConflictsAvoided: number;
     weeklyCapDeferred: number;
+    roundGroupWaits: number;
     targetReached: boolean;
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -677,9 +678,10 @@ function ScheduleGenerator({
 
       {activeDays.length > 1 && (
         <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -4, marginBottom: 12 }}>
-          Days in the same round group share one continuous round-robin schedule. Give a day its own group
-          (e.g. Saturday as group B while weeknights stay group A) so its games form separate, complete rounds
-          instead of a weeknight round quietly spilling into the weekend.
+          Days in the same round group share one round-robin schedule. When there&apos;s more than one group
+          (e.g. weeknights as group A, Saturday as group B), rounds ALTERNATE between them all season — group
+          A gets a full round where every team plays once, then group B gets the next full round, then group A
+          again, and so on. A group&apos;s days sit idle until it&apos;s their turn, so a round never splits across groups.
         </p>
       )}
 
@@ -781,6 +783,8 @@ function ScheduleGenerator({
               ` Skipped ${result.coachConflictsAvoided} slot(s) that would have double-booked a coach on another team.`}
             {result.weeklyCapDeferred > 0 &&
               ` Pushed ${result.weeklyCapDeferred} game(s) to a later week to stay under the max-games-per-week limit.`}
+            {result.roundGroupWaits > 0 &&
+              ` Left ${result.roundGroupWaits} date(s) unused because it wasn't that round group's turn yet.`}
           </p>
           {!result.targetReached && (
             <p style={{ color: '#B23A2E', fontSize: 13, marginTop: -4 }}>
