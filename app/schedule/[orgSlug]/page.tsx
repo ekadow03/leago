@@ -79,7 +79,7 @@ export default async function PublicSchedulePage({
                     : ev.title}
                   <span className="event-badge">{ev.type.replace('_', ' ')}</span>
                   {ev.type === 'game' && ev.week_number != null && (
-                    <span className="event-badge">Round {ev.week_number}</span>
+                    <span className="event-badge">Week {ev.week_number}</span>
                   )}
                 </div>
                 <div className="schedule-event-meta">

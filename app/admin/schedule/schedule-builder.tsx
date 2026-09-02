@@ -722,7 +722,7 @@ export default function ScheduleBuilder({
             value={editWeekNumber}
             onChange={(e) => setEditWeekNumber(e.target.value)}
             className="form-input"
-            placeholder="Round number (optional)"
+            placeholder="Week number (optional)"
             style={{ maxWidth: 200 }}
           />
           <div style={{ display: 'flex', gap: 8 }}>
@@ -938,8 +938,8 @@ export default function ScheduleBuilder({
                 <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -4, marginBottom: 12 }}>
                   Use this for a one-off game the season generator wouldn&apos;t create on its own — for example,
                   an extra 3rd game for two specific teams in one week to help a division catch up before the
-                  season&apos;s end date if the standard round-by-round pattern couldn&apos;t fit every team&apos;s
-                  full game count.
+                  season&apos;s end date if the standard weekly pattern couldn&apos;t fit every team&apos;s full game
+                  count.
                 </p>
               )}
               <select value={type} onChange={(e) => setType(e.target.value as any)} className="form-input">
@@ -974,12 +974,12 @@ export default function ScheduleBuilder({
                     value={weekNumber}
                     onChange={(e) => setWeekNumber(e.target.value)}
                     className="form-input"
-                    placeholder="Round/week number (optional)"
+                    placeholder="Week number (optional)"
                     style={{ maxWidth: 220 }}
                   />
                   <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -8, marginBottom: 12 }}>
-                    Groups this game with that week&apos;s others on this page — match whatever round number is
-                    already showing for the week you want it under, or leave blank to file it as Unscheduled.
+                    Groups this game with that week&apos;s others on this page — match whatever week number is already
+                    showing for the week you want it under, or leave blank to file it as Unscheduled.
                   </p>
                 </>
               )}
@@ -1008,7 +1008,7 @@ export default function ScheduleBuilder({
               {sortedWeekKeys.map((weekKey) => (
                 <div key={weekKey ?? 'unscheduled'} style={{ marginBottom: 20 }}>
                   <h3 style={{ fontSize: 14, color: 'var(--gray)', marginBottom: 8 }}>
-                    {weekKey === null ? 'Unscheduled / manually added' : `Round ${weekKey}`}
+                    {weekKey === null ? 'Unscheduled / manually added' : `Week ${weekKey}`}
                   </h3>
                   <div className="data-table-card">{weekGroups.get(weekKey)!.map((ev) => renderEventRow(ev))}</div>
                 </div>
