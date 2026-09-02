@@ -11,6 +11,14 @@
 // comes first. The end date is a hard backstop, not the primary driver of
 // how long the season runs — gamesPerTeam is.
 //
+// Placement is a single continuous fill across the whole date range —
+// see Step 4 — not a "round" system where a fixed batch of matchups has
+// to fully land on specific dates before the next batch can start. Every
+// configured game date (weekday and weekend alike) draws from the same
+// pending queue of matchups in fairness order, so a date with more open
+// slots naturally carries more of the load and a blacked-out or fully-
+// booked date just means fewer chances that day — never a lost matchup.
+//
 // Each day of the week carries its own list of (time, field) slots,
 // rather than one flat set of times/fields applied to every selected
 // day — a weekday might only offer a single 5pm slot, while Saturday
@@ -23,9 +31,15 @@
 // taken. That's what keeps two divisions sharing the same physical field
 // from getting double-booked into the same game.
 //
-// Every game created in one generation run also gets a week_number —
-// see the comment on that column (migration 0014) for what it means and
-// why it isn't a real calendar week.
+// Every game created in one generation run also gets a week_number,
+// which IS a real calendar week (1-based, counted from the season's own
+// start date using weekStartDay) — see Step 3b.
+//
+// If the date range runs out before every team hits gamesPerTeam, the
+// leftover matchups aren't just reported as a shortfall — Step 4b finds
+// a few real open slots for each one (a week where neither team already
+// has a game, on a date/time/field that's otherwise free) so the admin
+// can place them by hand from the Season Builder results.
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOrgPermission } from '@/lib/org-context';
@@ -35,18 +49,6 @@ interface DaySlotInput {
   dayOfWeek: number; // 0 = Sunday .. 6 = Saturday
   time: string; // "18:00", "19:30", etc — 24hr format
   field: string; // location name, e.g. "Field 1"
-  // Which independent round-robin track this day belongs to (migration-
-  // free — stored as-is inside schedule_generation_settings.day_slots
-  // jsonb). Days in the same group share ONE continuous round-robin
-  // queue; days in different groups each cycle through their own,
-  // completely independent of the other group's slot availability. This
-  // is what lets "weeknight games" be one round and "Saturday's full
-  // slate" be a separate round, instead of Saturday's extra capacity
-  // finishing off a weeknight round that started earlier in the week.
-  // Defaults to 'A' (a single shared group — today's behavior) when
-  // omitted, so callers/saved settings from before this feature work
-  // unchanged.
-  roundGroup?: string;
 }
 
 interface GenerateScheduleInput {
@@ -166,6 +168,13 @@ function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
+// Local (not UTC-shifted) calendar-date string, used as a map key
+// wherever a Date needs to be compared/grouped by its own day rather
+// than by its UTC instant.
+function dateKey(date: Date): string {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
+
 // Groups a date into a "week" for maxGamesPerWeek purposes, given which
 // weekday starts that week (0=Sunday..6=Saturday). Returns the ISO date
 // (YYYY-MM-DD, in the schedule's own local calendar — not UTC-shifted)
@@ -190,7 +199,7 @@ function getWeekKey(date: Date, weekStartDay: number): string {
 function isBlackedOut(date: Date, time: string, field: string, blackouts: BlackoutRow[], timeZone: string): boolean {
   if (blackouts.length === 0) return false;
 
-  const dateStr = `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+  const dateStr = dateKey(date);
   const slotMs = new Date(zonedDateTimeToIso(date, time, timeZone)).getTime();
 
   for (const b of blackouts) {
@@ -225,6 +234,18 @@ function isBlackedOut(date: Date, time: string, field: string, blackouts: Blacko
   return false;
 }
 
+// A matchup that's still needed (neither team has reached gamesPerTeam)
+// but never found an open, eligible date/time/field within the season's
+// date range — see Step 4b. candidateSlots is a short list of real open
+// slots the admin could place it into by hand; empty means nothing open
+// was found at all (every remaining slot is booked, blacked out, or
+// would double-book a coach for both teams' whole remaining season).
+interface UnplacedMatchup {
+  homeTeamId: string;
+  awayTeamId: string;
+  candidateSlots: { startTime: string; field: string; weekNumber: number }[];
+}
+
 type GenerateScheduleResult =
   | {
       gamesCreated: number;
@@ -235,9 +256,8 @@ type GenerateScheduleResult =
       fieldsReserved: number;
       coachConflictsAvoided: number;
       weeklyCapDeferred: number;
-      roundGroupWaits: number;
-      roundsSkippedForBlackout: number;
       targetReached: boolean;
+      unplacedMatchups: UnplacedMatchup[];
       // Set only when the best-effort "remember these inputs" write in
       // Step 6 fails — the schedule itself already succeeded by then, so
       // this doesn't turn generation into a failure, but a silently
@@ -310,16 +330,6 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
       list.sort((a, b) => a.time.localeCompare(b.time));
     }
 
-    // Which round-robin track each day of week feeds into — a day's
-    // group is whatever its slots say (the Season Builder assigns one
-    // group per day, not per slot, so the first slot seen for a day is
-    // authoritative), defaulting to 'A' for a day with no group set at
-    // all. See the round-placement loop below for how groups stay
-    // independent of each other.
-    const dayToGroup = new Map<number, string>();
-    for (const [day, slots] of slotsByDay.entries()) {
-      dayToGroup.set(day, slots[0]?.roundGroup || 'A');
-    }
 
     // ---- Step 1: every actual calendar date in range that has at least
     // one configured slot for its day of week (endDate is a hard cap on
@@ -480,55 +490,47 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
       round.filter(([a, b]) => a !== null && b !== null) as [string, string][]
     );
 
-    // ---- Step 4: walk game dates in order, placing one ROUND per date
-    // (not one slot-fill-everything pass) — this is what keeps a rec
-    // season realistic: each team plays once on a given game day, not
-    // multiple times just because extra slots happened to be available.
-    // A round that's too big for one date's available slots spills onto
-    // the next date(s) before advancing to the next round.
-    //
-    // There is only ONE round-robin cycle/queue for the whole division —
-    // NOT one per round-robin group. What alternates is which GROUP the
-    // *current* round is allowed to use: round 1 is confined to whichever
-    // group's day comes first chronologically (e.g. a weekday group),
-    // round 2 is confined to the NEXT group in rotation (e.g. a weekend
-    // group), round 3 goes back to the first group, and so on — cycling
-    // through every distinct group that's actually configured, in the
-    // order each first appears in the season. A division that never
-    // splits its days into more than one group (the default — every day
-    // defaults to group 'A') behaves exactly as before any of this
-    // existed: one continuous round-robin queue, nothing ever skipped
-    // for group reasons.
-    //
-    // Dates are bucketed into TURNS first: a turn is a maximal run of
-    // consecutive game dates that all belong to the same group — e.g.
-    // "this week's Tue + Thu" is one weekday turn, and the very next
-    // Saturday starts a brand new weekend turn, even though the two
-    // groups' dates are interleaved chronologically in one flat list. A
-    // round is confined to its assigned group's CURRENT turn: if that
-    // turn's dates aren't enough to finish the round, the remainder
-    // carries over to that same group's NEXT turn (today's spillover
-    // behavior, unchanged) — UNLESS every single date in the turn came
-    // up with zero usable slots because of a blackout or a higher-
-    // priority division's field reservation (not merely "already booked"
-    // or "coach conflict," which are temporary and worth waiting out).
-    // In that case there's nothing to wait for — the whole window really
-    // is unusable — so the round is abandoned outright (those specific
-    // matchups simply don't happen) and the next turn starts a fresh
-    // round immediately, instead of every later round stalling behind
-    // one that can never complete. A holiday week that blacks out every
-    // weekday slot no longer holds up the following weekend's round (or
-    // every round after it) for the rest of the season.
-    //
-    // week_number is a display label, not a calendar week: it increments
-    // by exactly one every time a fresh round starts, in the single
-    // shared sequence described above — e.g. round 1 (weekday) is
-    // "Week 1", the following weekend round is "Week 2", the next
-    // weekday round is "Week 3", regardless of which real calendar week
-    // each falls in (and regardless of whether a round ended up empty
-    // because its turn was skipped for the blackout reason above). Stops
-    // as soon as every team has reached gamesPerTeam (or the date range
-    // runs out first). ----
+    // ---- Step 3b: number every game date into a calendar week (1-based,
+    // chronological) using weekStartDay. This used to be driven by when a
+    // "round" started — now that placement no longer works in rounds (see
+    // Step 4), it's just a calendar grouping: purely a display label
+    // (week_number on events), and the same grouping the max-games-per-
+    // week cap and the leftover-matchup suggestions below use to know
+    // which dates count as the same "week." ----
+    const weekNumberByDateKey = new Map<string, number>();
+    {
+      let nextWeekNumber = 0;
+      let lastWeekKey: string | null = null;
+      for (const date of gameDates) {
+        const wk = getWeekKey(date, weekStartDay);
+        if (wk !== lastWeekKey) {
+          nextWeekNumber++;
+          lastWeekKey = wk;
+        }
+        weekNumberByDateKey.set(dateKey(date), nextWeekNumber);
+      }
+    }
+
+    // ---- Step 4: walk every game date in chronological order — weekday
+    // and weekend dates interleaved exactly as they fall on the calendar,
+    // NOT split into separate "rounds" confined to one or the other (the
+    // old round-group system). Every date draws from the same pending
+    // queue of matchups, seeded one round-robin cycle at a time and
+    // refilled once the current one is fully placed, in fairness order.
+    // A date with more open slots (a typical Saturday, say) naturally
+    // ends up placing more games than a weekday with just one slot —
+    // there's no artificial gate keeping rounds in lockstep with each
+    // other or waiting for "their turn." Concretely: whichever dates
+    // actually have room carry the load. A blackout, an already-booked
+    // slot, or a coach conflict just means fewer chances on THAT one
+    // date — the matchup stays in the queue and gets tried again on the
+    // very next date with an open, eligible slot, whether that's a
+    // weekday or a weekend date. Nothing is ever dropped for a blackout;
+    // the season's date range as a whole is the only backstop, not any
+    // single date or stretch of them. Whatever's still in the queue once
+    // the date range (or the games-per-team target) runs out becomes the
+    // "unplaced matchups" list in Step 4b, with suggested open slots for
+    // the admin to place by hand. ----
     const eventsToInsert: Array<{
       organization_id: string;
       season_id: string;
@@ -544,50 +546,15 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
       week_number: number;
     }> = [];
 
-    interface RoundTurn {
-      group: string;
-      dates: Date[];
-    }
-    const turns: RoundTurn[] = [];
-    for (const date of gameDates) {
-      const g = dayToGroup.get(date.getDay()) ?? 'A';
-      const lastTurn = turns[turns.length - 1];
-      if (lastTurn && lastTurn.group === g) {
-        lastTurn.dates.push(date);
-      } else {
-        turns.push({ group: g, dates: [date] });
-      }
-    }
-
-    // The rotation order is whichever order each group's day FIRST shows
-    // up while walking the season's actual turns — so if the season
-    // starts on a weekday, the weekday group goes first; if it happens to
-    // start on a Saturday, the weekend group goes first instead. A
-    // division using only one group ends up with a single-element
-    // rotation, i.e. it never skips anything.
-    const distinctGroupsInOrder: string[] = [];
-    {
-      const seenGroups = new Set<string>();
-      for (const turn of turns) {
-        if (!seenGroups.has(turn.group)) {
-          seenGroups.add(turn.group);
-          distinctGroupsInOrder.push(turn.group);
-        }
-      }
-    }
-
     let roundIndex = -1;
-    let pendingMatchups: [string, string][] = [];
-    let weekNumber = 0; // becomes 1 the moment the first round starts
-    let currentGroupIdx = 0; // which entry of distinctGroupsInOrder the ACTIVE round is confined to
-    let roundGroupWaits = 0; // dates left unused because it wasn't the active round's group's turn yet
-    let roundsSkippedForBlackout = 0; // rounds abandoned because their whole turn was blacked out / reserved
+    const pendingQueue: [string, string][] = [];
 
     let conflictsAvoided = 0;
     let blackoutsSkipped = 0;
     let fieldsReserved = 0;
     let coachConflictsAvoided = 0;
     let weeklyCapDeferred = 0;
+    const weekNumbersUsed = new Set<number>();
 
     // teamId -> calendar-week key (getWeekKey) -> games already placed in
     // that week. Only consulted/updated when maxGamesPerWeek is set —
@@ -603,176 +570,196 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     }
 
     const gamesPlayed = new Map<string, number>(teamIds.map((id) => [id, 0]));
-    const targetReachedFor = () =>
-      teamIds.every((id) => (gamesPlayed.get(id) ?? 0) >= input.gamesPerTeam);
+    const targetReachedFor = () => teamIds.every((id) => (gamesPlayed.get(id) ?? 0) >= input.gamesPerTeam);
 
-    turnsLoop:
-    for (const turn of turns) {
-      // Start a fresh round the moment the previous one is fully placed
-      // (or abandoned — see below) or right at the very start of the
-      // season — BEFORE deciding whether this turn is even the right
-      // group's turn, since it's this step that decides which group IS
-      // the right one right now.
-      if (pendingMatchups.length === 0) {
+    // Tops the queue up with the next round-robin cycle whenever it runs
+    // dry, unless every team has already reached its target — this is
+    // what makes "the round is still accounted for, just try the next
+    // date" true: a round's matchups only ever leave the queue by being
+    // PLACED, never by being abandoned because of where they happened to
+    // fall on the calendar.
+    function refillQueueIfEmpty(): void {
+      while (pendingQueue.length === 0 && !targetReachedFor()) {
         roundIndex = (roundIndex + 1) % cycleRounds.length;
-        pendingMatchups = [...cycleRounds[roundIndex]];
-        weekNumber++;
-        // The very first round is already confined to
-        // distinctGroupsInOrder[0] by construction (that's the group of
-        // the season's first turn) — only rotate forward once there's a
-        // PRIOR round to rotate away from.
-        if (weekNumber > 1) {
-          currentGroupIdx = (currentGroupIdx + 1) % distinctGroupsInOrder.length;
+        pendingQueue.push(...cycleRounds[roundIndex]);
+      }
+    }
+
+    dateLoop: for (const date of gameDates) {
+      if (targetReachedFor()) break;
+
+      const configuredSlots = slotsByDay.get(date.getDay())!;
+      const availableSlots = configuredSlots.filter((slot) => {
+        if (reservedFieldNames.has(slot.field.toLowerCase())) {
+          fieldsReserved++;
+          return false;
         }
-      }
+        if (isBlackedOut(date, slot.time, slot.field, blackouts, timeZone)) {
+          blackoutsSkipped++;
+          return false;
+        }
+        const isoTime = zonedDateTimeToIso(date, slot.time, timeZone);
+        const taken = occupied.has(`${slot.field}|${isoTime}`);
+        if (taken) conflictsAvoided++;
+        return !taken;
+      });
 
-      const activeGroup = distinctGroupsInOrder[currentGroupIdx];
-      if (turn.group !== activeGroup) {
-        // Not this round's turn — e.g. round 2 is a weekend round and
-        // this turn's Tuesday/Thursday. Leave this turn's slots untouched
-        // and wait for a turn in `activeGroup` instead of letting it help
-        // finish (or start) a round that isn't assigned to it.
-        roundGroupWaits += turn.dates.length;
-        continue;
-      }
+      if (availableSlots.length === 0) continue;
 
-      const matchupsAtTurnStart = pendingMatchups.length;
-      // Stays true only if EVERY date in this turn had zero slots left
-      // after filtering out blackouts and higher-priority field
-      // reservations specifically — an already-booked or coach-
-      // conflicted date doesn't count, since those are worth waiting out
-      // rather than grounds to abandon the round.
-      let turnEntirelyBlackedOut = true;
+      const weekKey = getWeekKey(date, weekStartDay);
+      const weekNumber = weekNumberByDateKey.get(dateKey(date))!;
+      // Which teams already got a slot filled TODAY — a team can't play
+      // twice on the same date no matter how many open slots there are.
+      const usedTeamsToday = new Set<string>();
 
-      for (const date of turn.dates) {
-        const configuredSlots = slotsByDay.get(date.getDay())!;
+      for (const slot of availableSlots) {
+        if (targetReachedFor()) break dateLoop;
+        refillQueueIfEmpty();
+        if (pendingQueue.length === 0) break; // nothing left to schedule at all
 
-        const dateFullyBlackedOut = configuredSlots.every(
-          (slot) =>
-            reservedFieldNames.has(slot.field.toLowerCase()) ||
-            isBlackedOut(date, slot.time, slot.field, blackouts, timeZone)
-        );
-        if (!dateFullyBlackedOut) turnEntirelyBlackedOut = false;
+        // Scan the queue in fairness order for the first matchup that
+        // can actually use THIS slot — not a fixed positional zip, since
+        // the front of the queue might be blocked by a coach conflict,
+        // a maxed-out weekly cap, or a team that already played today,
+        // while something further back fits fine.
+        let chosenIdx = -1;
+        let chosenIsoTime = '';
+        let chosenStartMs = 0;
+        let chosenEndMs = 0;
 
-        const availableSlots = configuredSlots.filter((slot) => {
-          if (reservedFieldNames.has(slot.field.toLowerCase())) {
-            fieldsReserved++;
-            return false;
-          }
-          if (isBlackedOut(date, slot.time, slot.field, blackouts, timeZone)) {
-            blackoutsSkipped++;
-            return false;
-          }
-          const isoTime = zonedDateTimeToIso(date, slot.time, timeZone);
-          const taken = occupied.has(`${slot.field}|${isoTime}`);
-          if (taken) conflictsAvoided++;
-          return !taken;
-        });
+        for (let qi = 0; qi < pendingQueue.length; qi++) {
+          const [homeId, awayId] = pendingQueue[qi];
+          if (usedTeamsToday.has(homeId) || usedTeamsToday.has(awayId)) continue;
 
-        if (availableSlots.length === 0) continue;
-
-        // Pair today's matchups with today's slots one at a time (not a
-        // fixed positional zip) — a coach on two teams means SOME
-        // matchup in this round may not have a conflict-free slot today
-        // at all, in which case it's deferred to the next game date
-        // (still this same round, still this same turn or a later one in
-        // this group) instead of silently double-booking them.
-        // usedSlotIndices tracks which of today's slots another matchup
-        // already claimed.
-        const matchupsToTry = [...pendingMatchups];
-        pendingMatchups = [];
-        const usedSlotIndices = new Set<number>();
-        const weekKey = maxGamesPerWeek !== null ? getWeekKey(date, weekStartDay) : '';
-
-        for (const [homeId, awayId] of matchupsToTry) {
-          // A per-team weekly cap (migration 0024) applies to the whole
-          // date, not a specific slot — if either side of this matchup
-          // has already reached it for this calendar week, no slot today
-          // will help, so defer straight to a later date (a later date
-          // may fall in the following week, where the count resets)
-          // instead of burning a slot search.
           if (
             maxGamesPerWeek !== null &&
             (weeklyCountFor(homeId, weekKey) >= maxGamesPerWeek || weeklyCountFor(awayId, weekKey) >= maxGamesPerWeek)
           ) {
             weeklyCapDeferred++;
-            pendingMatchups.push([homeId, awayId]);
             continue;
           }
 
-          let chosenSlotIndex: number | null = null;
-          let chosenIsoTime = '';
-          let chosenStartMs = 0;
-          let chosenEndMs = 0;
+          const isoTime = zonedDateTimeToIso(date, slot.time, timeZone);
+          const startMs = new Date(isoTime).getTime();
+          const endMs = startMs + input.gameDurationMinutes * 60000;
 
-          for (let i = 0; i < availableSlots.length; i++) {
-            if (usedSlotIndices.has(i)) continue;
-            const slot = availableSlots[i];
-            const isoTime = zonedDateTimeToIso(date, slot.time, timeZone);
-            const startMs = new Date(isoTime).getTime();
-            const endMs = startMs + input.gameDurationMinutes * 60000;
-
-            if (coachConflictAt(homeId, awayId, startMs, endMs)) {
-              coachConflictsAvoided++;
-              continue;
-            }
-
-            chosenSlotIndex = i;
-            chosenIsoTime = isoTime;
-            chosenStartMs = startMs;
-            chosenEndMs = endMs;
-            break;
-          }
-
-          if (chosenSlotIndex === null) {
-            // No conflict-free slot today for this matchup — try again
-            // on a later date (still this same group) rather than
-            // forcing a coach into two games at once.
-            pendingMatchups.push([homeId, awayId]);
+          if (coachConflictAt(homeId, awayId, startMs, endMs)) {
+            coachConflictsAvoided++;
             continue;
           }
 
-          usedSlotIndices.add(chosenSlotIndex);
-          const slot = availableSlots[chosenSlotIndex];
-          const endIso = new Date(chosenEndMs).toISOString();
-
-          eventsToInsert.push({
-            organization_id: input.organizationId,
-            season_id: input.seasonId,
-            division_id: input.divisionId,
-            type: 'game',
-            title: 'Game',
-            location: slot.field,
-            start_time: chosenIsoTime,
-            end_time: endIso,
-            home_team_id: homeId,
-            away_team_id: awayId,
-            status: 'draft',
-            week_number: weekNumber,
-          });
-
-          gamesPlayed.set(homeId, (gamesPlayed.get(homeId) ?? 0) + 1);
-          gamesPlayed.set(awayId, (gamesPlayed.get(awayId) ?? 0) + 1);
-
-          // Reserve this slot for the rest of this generation run too, in
-          // case it's reachable more than once (shouldn't normally
-          // happen, but cheap to guard against).
-          occupied.add(`${slot.field}|${chosenIsoTime}`);
-          recordCoachBusy(homeId, awayId, chosenStartMs, chosenEndMs);
-          if (maxGamesPerWeek !== null) {
-            recordWeeklyGame(homeId, weekKey);
-            recordWeeklyGame(awayId, weekKey);
-          }
+          chosenIdx = qi;
+          chosenIsoTime = isoTime;
+          chosenStartMs = startMs;
+          chosenEndMs = endMs;
+          break;
         }
 
-        if (targetReachedFor()) break turnsLoop;
-      }
+        if (chosenIdx === -1) continue; // no eligible matchup fits this slot today — leave it unused
 
-      if (pendingMatchups.length === matchupsAtTurnStart && turnEntirelyBlackedOut) {
-        roundsSkippedForBlackout++;
-        pendingMatchups = [];
+        const [homeId, awayId] = pendingQueue[chosenIdx];
+        pendingQueue.splice(chosenIdx, 1);
+        usedTeamsToday.add(homeId);
+        usedTeamsToday.add(awayId);
+
+        eventsToInsert.push({
+          organization_id: input.organizationId,
+          season_id: input.seasonId,
+          division_id: input.divisionId,
+          type: 'game',
+          title: 'Game',
+          location: slot.field,
+          start_time: chosenIsoTime,
+          end_time: new Date(chosenEndMs).toISOString(),
+          home_team_id: homeId,
+          away_team_id: awayId,
+          status: 'draft',
+          week_number: weekNumber,
+        });
+        weekNumbersUsed.add(weekNumber);
+
+        gamesPlayed.set(homeId, (gamesPlayed.get(homeId) ?? 0) + 1);
+        gamesPlayed.set(awayId, (gamesPlayed.get(awayId) ?? 0) + 1);
+
+        // Reserve this slot for the rest of this generation run too, in
+        // case it's reachable more than once (shouldn't normally
+        // happen, but cheap to guard against).
+        occupied.add(`${slot.field}|${chosenIsoTime}`);
+        recordCoachBusy(homeId, awayId, chosenStartMs, chosenEndMs);
+        if (maxGamesPerWeek !== null) {
+          recordWeeklyGame(homeId, weekKey);
+          recordWeeklyGame(awayId, weekKey);
+        }
       }
     }
+
+    // ---- Step 4b: matchups that never found a home within the date
+    // range — gather them, plus a few real open (date/time/field)
+    // suggestions each, so the admin can place them by hand instead of
+    // just seeing "not everyone reached the target." Only matchups where
+    // BOTH teams still need a game are reported — if one side already
+    // hit its target, this specific pairing isn't actually required
+    // anymore. A suggested slot has to land in a week where NEITHER team
+    // already has a game (from this run, or an existing published game
+    // for this division) — the point is a bonus/makeup game that doesn't
+    // double up a week that's already spoken for — and still passes
+    // every other check a normal placement would (not blacked out, not
+    // reserved, not already taken, no coach conflict). These are
+    // suggestions only; nothing is created here — see the "Schedule"
+    // action in the Season Builder UI. ----
+    const teamWeekCommitments = new Map<string, Set<string>>();
+    function recordCommitment(teamId: string | null, startTimeIso: string): void {
+      if (!teamId) return;
+      const wk = getWeekKey(new Date(startTimeIso), weekStartDay);
+      const set = teamWeekCommitments.get(teamId) ?? new Set<string>();
+      set.add(wk);
+      teamWeekCommitments.set(teamId, set);
+    }
+    for (const ev of eventsToInsert) {
+      recordCommitment(ev.home_team_id, ev.start_time);
+      recordCommitment(ev.away_team_id, ev.start_time);
+    }
+    const teamIdSet = new Set(teamIds);
+    for (const ev of relevantExistingEvents) {
+      if (ev.home_team_id && teamIdSet.has(ev.home_team_id)) recordCommitment(ev.home_team_id, ev.start_time);
+      if (ev.away_team_id && teamIdSet.has(ev.away_team_id)) recordCommitment(ev.away_team_id, ev.start_time);
+    }
+
+    const MAX_SUGGESTIONS_PER_MATCHUP = 3;
+    const unplacedMatchups: UnplacedMatchup[] = pendingQueue
+      .filter(
+        ([homeId, awayId]) =>
+          (gamesPlayed.get(homeId) ?? 0) < input.gamesPerTeam && (gamesPlayed.get(awayId) ?? 0) < input.gamesPerTeam
+      )
+      .map(([homeId, awayId]) => {
+        const candidateSlots: UnplacedMatchup['candidateSlots'] = [];
+        for (const date of gameDates) {
+          if (candidateSlots.length >= MAX_SUGGESTIONS_PER_MATCHUP) break;
+          const wk = getWeekKey(date, weekStartDay);
+          if (teamWeekCommitments.get(homeId)?.has(wk) || teamWeekCommitments.get(awayId)?.has(wk)) continue;
+
+          const configuredSlots = slotsByDay.get(date.getDay());
+          if (!configuredSlots) continue;
+
+          for (const slot of configuredSlots) {
+            if (reservedFieldNames.has(slot.field.toLowerCase())) continue;
+            if (isBlackedOut(date, slot.time, slot.field, blackouts, timeZone)) continue;
+            const isoTime = zonedDateTimeToIso(date, slot.time, timeZone);
+            if (occupied.has(`${slot.field}|${isoTime}`)) continue;
+            const startMs = new Date(isoTime).getTime();
+            const endMs = startMs + input.gameDurationMinutes * 60000;
+            if (coachConflictAt(homeId, awayId, startMs, endMs)) continue;
+
+            candidateSlots.push({
+              startTime: isoTime,
+              field: slot.field,
+              weekNumber: weekNumberByDateKey.get(dateKey(date))!,
+            });
+            if (candidateSlots.length >= MAX_SUGGESTIONS_PER_MATCHUP) break;
+          }
+        }
+        return { homeTeamId: homeId, awayTeamId: awayId, candidateSlots };
+      });
 
     if (eventsToInsert.length === 0) {
       if (fieldsReserved > 0 && reservedFieldNames.size === fieldNamesUsed.length) {
@@ -846,15 +833,14 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     return {
       gamesCreated: eventsToInsert.length,
       replacedCount,
-      weeksScheduled: weekNumber,
+      weeksScheduled: weekNumbersUsed.size,
       conflictsAvoided,
       blackoutsSkipped,
       fieldsReserved,
       coachConflictsAvoided,
       weeklyCapDeferred,
-      roundGroupWaits,
-      roundsSkippedForBlackout,
       targetReached: targetReachedFor(),
+      unplacedMatchups,
       settingsSaveWarning: settingsSaveError ? settingsSaveError.message : undefined,
     };
   } catch (err) {

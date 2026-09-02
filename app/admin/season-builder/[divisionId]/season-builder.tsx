@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { generateSeasonSchedule } from '@/lib/actions/auto-schedule';
 import { createField } from '@/lib/actions/fields';
 import { createBlackout, deleteBlackout } from '@/lib/actions/blackouts';
+import { createEvent } from '@/lib/actions/events';
 
 interface Team {
   id: string;
@@ -43,11 +44,6 @@ interface SavedDaySlot {
   dayOfWeek: number;
   time: string;
   field: string;
-  // Which independent round-robin track this day's games belong to (see
-  // DaySlotInput in auto-schedule.ts). Optional so settings saved before
-  // this feature still restore fine — every slot for a day carries the
-  // same value, since the picker assigns a group per day, not per slot.
-  roundGroup?: string;
 }
 
 interface SavedSettings {
@@ -66,11 +62,9 @@ interface SavedSettings {
 function slotsToPickerState(slots: SavedDaySlot[]): {
   activeDays: number[];
   daySlots: Record<number, TimeGroup[]>;
-  dayRoundGroup: Record<number, string>;
 } {
   const activeDays = Array.from(new Set(slots.map((s) => s.dayOfWeek))).sort((a, b) => a - b);
   const daySlots: Record<number, TimeGroup[]> = {};
-  const dayRoundGroup: Record<number, string> = {};
   for (const slot of slots) {
     const groups = daySlots[slot.dayOfWeek] ?? (daySlots[slot.dayOfWeek] = []);
     let group = groups.find((g) => g.time === slot.time);
@@ -79,19 +73,12 @@ function slotsToPickerState(slots: SavedDaySlot[]): {
       groups.push(group);
     }
     if (!group.fields.includes(slot.field)) group.fields.push(slot.field);
-    if (!dayRoundGroup[slot.dayOfWeek]) dayRoundGroup[slot.dayOfWeek] = slot.roundGroup || 'A';
   }
   for (const day of Object.keys(daySlots)) {
     daySlots[Number(day)].sort((a, b) => a.time.localeCompare(b.time));
   }
-  return { activeDays, daySlots, dayRoundGroup };
+  return { activeDays, daySlots };
 }
-
-// A fixed, small set of round-robin track labels an admin can assign a
-// day to — plenty for the realistic cases (a weeknight track and a
-// Saturday track being the most common) without an open-ended "add a
-// group" control to manage.
-const ROUND_GROUP_OPTIONS = ['A', 'B', 'C', 'D'];
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -137,6 +124,7 @@ export default function SeasonBuilder({
         seasonId={seasonId}
         divisionId={divisionId}
         divisionName={divisionName}
+        teams={initialTeams}
         teamCount={initialTeams.length}
         draftGameCount={draftGameCount}
         publishedGameCount={publishedGameCount}
@@ -243,8 +231,6 @@ function DaySlotEditor({
   day,
   timeGroups,
   fields,
-  roundGroup,
-  onChangeRoundGroup,
   onAddTime,
   onRemoveTime,
   onAddField,
@@ -253,8 +239,6 @@ function DaySlotEditor({
   day: number;
   timeGroups: TimeGroup[];
   fields: string[];
-  roundGroup: string;
-  onChangeRoundGroup: (group: string) => void;
   onAddTime: (time: string) => void;
   onRemoveTime: (time: string) => void;
   onAddField: (time: string, field: string) => void;
@@ -264,24 +248,7 @@ function DaySlotEditor({
 
   return (
     <div style={{ background: 'var(--gray-light)', borderRadius: 10, padding: 14, marginBottom: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <div style={{ fontWeight: 700, fontSize: 13 }}>{DAY_LABELS[day]} slots</div>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--gray)' }}>
-          Round group
-          <select
-            value={roundGroup}
-            onChange={(e) => onChangeRoundGroup(e.target.value)}
-            className="form-input"
-            style={{ width: 64, marginBottom: 0, padding: '4px 6px' }}
-          >
-            {ROUND_GROUP_OPTIONS.map((g) => (
-              <option key={g} value={g}>
-                {g}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 10 }}>{DAY_LABELS[day]} slots</div>
 
       {timeGroups.length === 0 && (
         <p style={{ fontSize: 12, color: 'var(--gray)', marginBottom: 10 }}>No times yet — add one below.</p>
@@ -320,6 +287,7 @@ function ScheduleGenerator({
   seasonId,
   divisionId,
   divisionName,
+  teams,
   teamCount,
   draftGameCount,
   publishedGameCount,
@@ -333,6 +301,7 @@ function ScheduleGenerator({
   seasonId: string;
   divisionId: string;
   divisionName: string;
+  teams: Team[];
   teamCount: number;
   draftGameCount: number;
   publishedGameCount: number;
@@ -369,11 +338,6 @@ function ScheduleGenerator({
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [activeDays, setActiveDays] = useState<number[]>(restored?.activeDays ?? []);
   const [daySlots, setDaySlots] = useState<Record<number, TimeGroup[]>>(restored?.daySlots ?? {});
-  // Which round-robin track (see ROUND_GROUP_OPTIONS) each active day
-  // feeds into. A day not present here defaults to 'A' — the single
-  // shared track every day starts in, so ignoring this control entirely
-  // reproduces the old one-continuous-round-robin behavior.
-  const [dayRoundGroup, setDayRoundGroup] = useState<Record<number, string>>(restored?.dayRoundGroup ?? {});
   const [gamesPerTeam, setGamesPerTeam] = useState(initialSettings ? String(initialSettings.games_per_team) : '');
   const [gameDuration, setGameDuration] = useState(
     initialSettings ? String(initialSettings.game_duration_minutes) : '60'
@@ -385,6 +349,11 @@ function ScheduleGenerator({
   );
   const [weekStartDay, setWeekStartDay] = useState(String(initialSettings?.week_start_day ?? 0));
   const [error, setError] = useState<string | null>(null);
+  interface UnplacedMatchup {
+    homeTeamId: string;
+    awayTeamId: string;
+    candidateSlots: { startTime: string; field: string; weekNumber: number }[];
+  }
   const [result, setResult] = useState<{
     gamesCreated: number;
     replacedCount: number;
@@ -394,12 +363,17 @@ function ScheduleGenerator({
     fieldsReserved: number;
     coachConflictsAvoided: number;
     weeklyCapDeferred: number;
-    roundGroupWaits: number;
-    roundsSkippedForBlackout: number;
     targetReached: boolean;
+    unplacedMatchups: UnplacedMatchup[];
     settingsSaveWarning?: string;
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Matchups the admin has already scheduled from the "unplaced" list
+  // below (by team-pair key) — removed from view immediately rather
+  // than waiting on a full page refresh.
+  const [scheduledUnplaced, setScheduledUnplaced] = useState<Set<number>>(new Set());
+  const [schedulingKey, setSchedulingKey] = useState<string | null>(null);
+  const [scheduleUnplacedError, setScheduleUnplacedError] = useState<string | null>(null);
 
   // Adds an already-registered org field to THIS division's active list
   // — no server call needed, it's already in the shared registry.
@@ -460,20 +434,10 @@ function ScheduleGenerator({
           delete next[day];
           return next;
         });
-        setDayRoundGroup((g) => {
-          const next = { ...g };
-          delete next[day];
-          return next;
-        });
         return prev.filter((d) => d !== day);
       }
-      setDayRoundGroup((g) => (g[day] ? g : { ...g, [day]: 'A' }));
       return [...prev, day].sort();
     });
-  }
-
-  function setRoundGroupForDay(day: number, group: string) {
-    setDayRoundGroup((prev) => ({ ...prev, [day]: group }));
   }
 
   function addTimeToDay(day: number, time: string) {
@@ -527,10 +491,14 @@ function ScheduleGenerator({
     gameDurationNum >= 1 &&
     maxGamesPerWeekValid;
 
+  const teamById = new Map(teams.map((t) => [t.id, t.name]));
+
   async function handleGenerate() {
     setSubmitting(true);
     setError(null);
     setResult(null);
+    setScheduledUnplaced(new Set());
+    setScheduleUnplacedError(null);
     try {
       const flatSlots = Object.entries(daySlots).flatMap(([day, groups]) =>
         groups.flatMap((g) =>
@@ -538,7 +506,6 @@ function ScheduleGenerator({
             dayOfWeek: Number(day),
             time: g.time,
             field,
-            roundGroup: dayRoundGroup[Number(day)] ?? 'A',
           }))
         )
       );
@@ -569,6 +536,58 @@ function ScheduleGenerator({
       setSubmitting(false);
     }
   }
+
+  // Places one unplaced matchup into one of its suggested open slots —
+  // the "or offer open spots for the user to pick" half of the
+  // leftover-matchup handling. Uses the exact same createEvent() path as
+  // the manual "+ Add event" form on the Schedule page, so it gets the
+  // same coach-conflict safety net; a conflict here (unlikely, since the
+  // suggestion was already checked at generation time, but another game
+  // could've been added in between) just points the admin at that form
+  // instead of silently forcing it through.
+  async function handleScheduleUnplaced(
+    index: number,
+    matchup: { homeTeamId: string; awayTeamId: string },
+    slot: { startTime: string; field: string; weekNumber: number }
+  ) {
+    setSchedulingKey(String(index));
+    setScheduleUnplacedError(null);
+    try {
+      const endTime = new Date(new Date(slot.startTime).getTime() + gameDurationNum * 60000).toISOString();
+      const res = await createEvent({
+        organizationId,
+        seasonId,
+        divisionId,
+        type: 'game',
+        title: 'Game',
+        location: slot.field,
+        startTime: slot.startTime,
+        endTime,
+        homeTeamId: matchup.homeTeamId,
+        awayTeamId: matchup.awayTeamId,
+        weekNumber: slot.weekNumber,
+      });
+      if ('conflicts' in res) {
+        setScheduleUnplacedError(
+          "That slot now double-books a coach — use \"+ Add event\" on the Schedule page instead, which lets you confirm and create it anyway."
+        );
+        return;
+      }
+      if ('error' in res) {
+        setScheduleUnplacedError(res.error);
+        return;
+      }
+      setScheduledUnplaced((prev) => new Set(prev).add(index));
+    } catch (err: any) {
+      setScheduleUnplacedError(err.message);
+    } finally {
+      setSchedulingKey(null);
+    }
+  }
+
+  const remainingUnplacedMatchups = (result?.unplacedMatchups ?? [])
+    .map((m, i) => ({ ...m, index: i }))
+    .filter((m) => !scheduledUnplaced.has(m.index));
 
   return (
     <div className="form-card">
@@ -695,10 +714,11 @@ function ScheduleGenerator({
 
       {activeDays.length > 1 && (
         <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -4, marginBottom: 12 }}>
-          Days in the same round group share one round-robin schedule. When there&apos;s more than one group
-          (e.g. weeknights as group A, Saturday as group B), rounds ALTERNATE between them all season — group
-          A gets a full round where every team plays once, then group B gets the next full round, then group A
-          again, and so on. A group&apos;s days sit idle until it&apos;s their turn, so a round never splits across groups.
+          Every active day draws from the same pool of matchups, in the order a fair round-robin needs them —
+          there&apos;s no separate weekday/weekend track to keep in sync. A day with more open slots (a typical
+          Saturday, say) naturally ends up carrying more games than a weekday with just one slot, and a
+          blacked-out or fully-booked day just means fewer chances that day, not a lost game — it&apos;s tried
+          again on the next day that has room.
         </p>
       )}
 
@@ -708,8 +728,6 @@ function ScheduleGenerator({
           day={day}
           timeGroups={daySlots[day] ?? []}
           fields={fields}
-          roundGroup={dayRoundGroup[day] ?? 'A'}
-          onChangeRoundGroup={(group) => setRoundGroupForDay(day, group)}
           onAddTime={(time) => addTimeToDay(day, time)}
           onRemoveTime={(time) => removeTimeFromDay(day, time)}
           onAddField={(time, field) => addFieldToTime(day, time, field)}
@@ -789,7 +807,7 @@ function ScheduleGenerator({
             {result.replacedCount > 0
               ? `Replaced ${result.replacedCount} old draft game(s) — `
               : ''}
-            Created {result.gamesCreated} games across {result.weeksScheduled} round(s).
+            Created {result.gamesCreated} games across {result.weeksScheduled} week(s).
             {result.conflictsAvoided > 0 &&
               ` Skipped ${result.conflictsAvoided} slot(s) already booked by another event.`}
             {result.blackoutsSkipped > 0 &&
@@ -800,15 +818,12 @@ function ScheduleGenerator({
               ` Skipped ${result.coachConflictsAvoided} slot(s) that would have double-booked a coach on another team.`}
             {result.weeklyCapDeferred > 0 &&
               ` Pushed ${result.weeklyCapDeferred} game(s) to a later week to stay under the max-games-per-week limit.`}
-            {result.roundGroupWaits > 0 &&
-              ` Left ${result.roundGroupWaits} date(s) unused because it wasn't that round group's turn yet.`}
-            {result.roundsSkippedForBlackout > 0 &&
-              ` Skipped ${result.roundsSkippedForBlackout} whole round(s) because every date available to them that turn was blacked out or reserved.`}
           </p>
           {!result.targetReached && (
             <p style={{ color: '#B23A2E', fontSize: 13, marginTop: -4 }}>
-              Heads up: not every team reached {gamesPerTeamNum} games before the end date. Add more times/fields,
-              extend the end date, or lower the games-per-team target and regenerate.
+              Heads up: not every team reached {gamesPerTeamNum} games before the end date. See the matchups
+              below, or add more times/fields, extend the end date, or lower the games-per-team target and
+              regenerate.
             </p>
           )}
           {result.settingsSaveWarning && (
@@ -816,6 +831,65 @@ function ScheduleGenerator({
               Heads up: the games above were created fine, but your inputs weren&apos;t saved for next visit —
               you&apos;ll need to re-enter them if you come back later. Error: {result.settingsSaveWarning}
             </p>
+          )}
+
+          {remainingUnplacedMatchups.length > 0 && (
+            <div style={{ marginTop: 16, marginBottom: 4 }}>
+              <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+                {remainingUnplacedMatchups.length} matchup(s) still need a game and didn&apos;t fit anywhere in
+                the date range:
+              </p>
+              <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: 0, marginBottom: 10 }}>
+                Each one below has a few real open slots — a week where neither team already has a game — that
+                clear every conflict a normal placement would. Pick one to schedule it as a draft game, or use{' '}
+                <Link href="/admin/schedule" style={{ color: 'var(--green-dark)' }}>
+                  + Add event
+                </Link>{' '}
+                on the Schedule page for anything else.
+              </p>
+              {scheduleUnplacedError && <p style={{ color: '#B23A2E', fontSize: 13 }}>{scheduleUnplacedError}</p>}
+              <div className="data-table-card">
+                {remainingUnplacedMatchups.map((m) => (
+                  <div
+                    key={m.index}
+                    className="data-row"
+                    style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 8 }}
+                  >
+                    <div className="data-row-name">
+                      {teamById.get(m.homeTeamId) ?? 'Unknown team'} vs {teamById.get(m.awayTeamId) ?? 'Unknown team'}
+                    </div>
+                    {m.candidateSlots.length === 0 ? (
+                      <p style={{ fontSize: 12, color: 'var(--gray)', margin: 0 }}>
+                        No open slot found for either team — try adding more times/fields or extending the end
+                        date.
+                      </p>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        {m.candidateSlots.map((slot, si) => (
+                          <button
+                            key={si}
+                            type="button"
+                            className="btn-small"
+                            disabled={schedulingKey === String(m.index)}
+                            onClick={() => handleScheduleUnplaced(m.index, m, slot)}
+                          >
+                            {schedulingKey === String(m.index)
+                              ? 'Scheduling…'
+                              : `${new Date(slot.startTime).toLocaleString(undefined, {
+                                  weekday: 'short',
+                                  month: 'short',
+                                  day: 'numeric',
+                                  hour: 'numeric',
+                                  minute: '2-digit',
+                                })} · ${slot.field}`}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </>
       )}
