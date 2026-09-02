@@ -153,6 +153,7 @@ export default function ScheduleBuilder({
   // for the 'Unscheduled' bucket, so it can't double as 'no hover').
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverWeekKey, setDragOverWeekKey] = useState<number | null | undefined>(undefined);
+  const [dragOverRowId, setDragOverRowId] = useState<string | null>(null);
 
   const divisionsForSeason = divisions.filter((d) => d.season_id === selectedSeasonId);
 
@@ -724,17 +725,44 @@ export default function ScheduleBuilder({
 
   async function moveToWeek(eventId: string, weekKey: number | null) {
     setError(null);
+    const previousWeek = events.find((ev) => ev.id === eventId)?.week_number ?? null;
+    // Optimistic: show the move immediately rather than waiting on the
+    // round trip, and put it back if the save doesn't actually go through.
+    setEvents((prev) => prev.map((ev) => (ev.id === eventId ? { ...ev, week_number: weekKey } : ev)));
     const result = await updateEvent({ organizationId, eventId, weekNumber: weekKey });
     if ('error' in result) {
       setError(result.error);
+      setEvents((prev) => prev.map((ev) => (ev.id === eventId ? { ...ev, week_number: previousWeek } : ev)));
       return;
     }
-    if ('conflicts' in result) return; // a week-number-only patch never triggers this check
-    setEvents((prev) => prev.map((ev) => (ev.id === eventId ? { ...ev, week_number: weekKey } : ev)));
+    if ('conflicts' in result) {
+      // A week-number-only patch never actually triggers this, but handle
+      // it defensively in case that ever changes.
+      setEvents((prev) => prev.map((ev) => (ev.id === eventId ? { ...ev, week_number: previousWeek } : ev)));
+    }
   }
 
   async function swapTeams(a: EventRow, b: EventRow) {
     setError(null);
+    // Optimistic: swap immediately rather than waiting on two round trips,
+    // and put both back if either half is declined or fails.
+    setEvents((prev) =>
+      prev.map((ev) => {
+        if (ev.id === a.id) return { ...ev, home_team_id: b.home_team_id, away_team_id: b.away_team_id };
+        if (ev.id === b.id) return { ...ev, home_team_id: a.home_team_id, away_team_id: a.away_team_id };
+        return ev;
+      })
+    );
+    function revert() {
+      setEvents((prev) =>
+        prev.map((ev) => {
+          if (ev.id === a.id) return { ...ev, home_team_id: a.home_team_id, away_team_id: a.away_team_id };
+          if (ev.id === b.id) return { ...ev, home_team_id: b.home_team_id, away_team_id: b.away_team_id };
+          return ev;
+        })
+      );
+    }
+
     const resA = await updateWithConflictConfirm({
       organizationId,
       eventId: a.id,
@@ -743,9 +771,13 @@ export default function ScheduleBuilder({
     });
     if ('error' in resA) {
       setError(resA.error);
+      revert();
       return;
     }
-    if ('cancelled' in resA) return;
+    if ('cancelled' in resA) {
+      revert();
+      return;
+    }
 
     const resB = await updateWithConflictConfirm({
       organizationId,
@@ -755,7 +787,7 @@ export default function ScheduleBuilder({
     });
     if ('error' in resB || 'cancelled' in resB) {
       // b's half didn't go through (declined or failed) — put a back the
-      // way it was so we don't leave the pair half-swapped.
+      // way it was server-side too, since resA already committed there.
       await updateEvent({
         organizationId,
         eventId: a.id,
@@ -764,16 +796,8 @@ export default function ScheduleBuilder({
         allowConflicts: true,
       });
       if ('error' in resB) setError(resB.error);
-      return;
+      revert();
     }
-
-    setEvents((prev) =>
-      prev.map((ev) => {
-        if (ev.id === a.id) return { ...ev, home_team_id: b.home_team_id, away_team_id: b.away_team_id };
-        if (ev.id === b.id) return { ...ev, home_team_id: a.home_team_id, away_team_id: a.away_team_id };
-        return ev;
-      })
-    );
   }
 
   function handleDragStart(e: React.DragEvent, eventId: string) {
@@ -785,12 +809,14 @@ export default function ScheduleBuilder({
   function handleDragEnd() {
     setDraggedId(null);
     setDragOverWeekKey(undefined);
+    setDragOverRowId(null);
   }
 
   function handleDropOnGame(e: React.DragEvent, target: EventRow) {
     e.preventDefault();
     e.stopPropagation();
     setDragOverWeekKey(undefined);
+    setDragOverRowId(null);
     const sourceId = draggedId;
     setDraggedId(null);
     if (!sourceId || sourceId === target.id) return;
@@ -814,6 +840,7 @@ export default function ScheduleBuilder({
     e.preventDefault();
     e.stopPropagation();
     setDragOverWeekKey(undefined);
+    setDragOverRowId(null);
     const sourceId = draggedId;
     setDraggedId(null);
     if (!sourceId) return;
@@ -868,6 +895,8 @@ export default function ScheduleBuilder({
     }
 
     const draggableRow = ev.status !== 'published';
+    const isDragSource = draggedId === ev.id;
+    const isDropTarget = Boolean(draggedId) && draggedId !== ev.id && dragOverRowId === ev.id;
     return (
       <div
         key={ev.id}
@@ -876,10 +905,22 @@ export default function ScheduleBuilder({
         onDragStart={draggableRow ? (e) => handleDragStart(e, ev.id) : undefined}
         onDragEnd={draggableRow ? handleDragEnd : undefined}
         onDragOver={(e) => {
-          if (draggedId && draggedId !== ev.id) e.preventDefault();
+          if (draggedId && draggedId !== ev.id) {
+            e.preventDefault();
+            if (dragOverRowId !== ev.id) setDragOverRowId(ev.id);
+          }
         }}
+        onDragLeave={() => setDragOverRowId((id) => (id === ev.id ? null : id))}
         onDrop={(e) => handleDropOnGame(e, ev)}
-        style={{ opacity: draggedId === ev.id ? 0.4 : 1, cursor: draggableRow ? 'grab' : undefined }}
+        style={{
+          opacity: isDragSource ? 0.4 : 1,
+          cursor: draggableRow ? 'grab' : undefined,
+          background: isDropTarget ? 'var(--gray-light)' : undefined,
+          outline: isDropTarget ? '2px solid var(--blue)' : isDragSource ? '2px dashed var(--blue)' : undefined,
+          outlineOffset: -2,
+          borderRadius: isDropTarget || isDragSource ? 8 : undefined,
+          transition: 'background 0.08s ease, opacity 0.08s ease',
+        }}
       >
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
           <input
@@ -1153,19 +1194,23 @@ export default function ScheduleBuilder({
                 draggable — unpublish first, or use Edit.
               </p>
 
-              {sortedWeekKeys.map((weekKey) => (
+              {sortedWeekKeys.map((weekKey) => {
+                const isWeekDropTarget = Boolean(draggedId) && dragOverWeekKey === weekKey;
+                return (
                 <div
                   key={weekKey ?? 'unscheduled'}
                   style={{
                     marginBottom: 20,
-                    outline: draggedId && dragOverWeekKey === weekKey ? '2px dashed var(--blue)' : undefined,
+                    outline: isWeekDropTarget ? '2px dashed var(--blue)' : undefined,
                     outlineOffset: 4,
+                    background: isWeekDropTarget ? 'rgba(37, 99, 235, 0.06)' : undefined,
                     borderRadius: 8,
+                    transition: 'background 0.08s ease',
                   }}
                   onDragOver={(e) => {
                     if (draggedId) {
                       e.preventDefault();
-                      setDragOverWeekKey(weekKey);
+                      if (dragOverWeekKey !== weekKey) setDragOverWeekKey(weekKey);
                     }
                   }}
                   onDragLeave={() => setDragOverWeekKey((k) => (k === weekKey ? undefined : k))}
@@ -1176,7 +1221,8 @@ export default function ScheduleBuilder({
                   </h3>
                   <div className="data-table-card">{weekGroups.get(weekKey)!.map((ev) => renderEventRow(ev))}</div>
                 </div>
-              ))}
+                );
+              })}
             </>
           )}
         </>
