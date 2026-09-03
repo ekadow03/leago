@@ -34,6 +34,24 @@ export async function getCurrentUserMemberships(): Promise<OrgMembership[]> {
 
   if (!user) return [];
 
+  // Resolve the caller's own person row as its own query, rather than
+  // filtering it via an embedded resource on the organization_members
+  // select below. `.eq('people.auth_user_id', ...)` on a non-`!inner`
+  // embed doesn't restrict which top-level rows PostgREST returns — RLS
+  // still lets an org member see every membership row for their org(s),
+  // it just nulls out the embed on rows that aren't theirs — so the old
+  // code's `row.people.id` crashed with "Cannot read properties of null
+  // (reading 'id')" for any org member as soon as an org had a second
+  // active member. Looking the person up directly here sidesteps that
+  // class of bug entirely instead of chasing the right embed-hint syntax.
+  const { data: person } = await supabase
+    .from('people')
+    .select('id')
+    .eq('auth_user_id', user.id)
+    .maybeSingle();
+
+  if (!person) return [];
+
   const { data, error } = await supabase
     .from('organization_members')
     .select(
@@ -41,11 +59,10 @@ export async function getCurrentUserMemberships(): Promise<OrgMembership[]> {
       organization_id,
       role,
       status,
-      people!organization_members_person_id_fkey ( id, auth_user_id ),
       organizations!inner ( id, name, slug )
     `
     )
-    .eq('people.auth_user_id', user.id)
+    .eq('person_id', person.id)
     .eq('status', 'active')
     // Most-recently-created membership first. Several pages resolve
     // "the" org an admin is working in via memberships[0] with no
@@ -68,7 +85,7 @@ export async function getCurrentUserMemberships(): Promise<OrgMembership[]> {
         organizationId: org.id,
         organizationName: org.name,
         organizationSlug: org.slug,
-        personId: row.people.id,
+        personId: person.id,
         roles: [row.role],
         permissions: [],
       });
