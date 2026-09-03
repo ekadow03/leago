@@ -5,6 +5,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { createTeam, deleteTeam, deleteAllTeamsInDivision } from '@/lib/actions/teams';
 import { bulkCreateTeams } from '@/lib/actions/team-import';
+import { bulkImportCoaches, type CoachImportRow, type CoachRole } from '@/lib/actions/coach-import';
+import { bulkImportRoster, type RosterImportRow } from '@/lib/actions/roster-import';
 
 interface Season {
   id: string;
@@ -139,6 +141,13 @@ export default function TeamsManager({
             organizationId={organizationId}
             divisionsForSeason={divisionsForSeason}
             onImported={handleTeamsImported}
+          />
+
+          <RosterAndCoachImportPanel
+            key={selectedSeasonId}
+            organizationId={organizationId}
+            divisionsForSeason={divisionsForSeason}
+            teams={teams}
           />
 
           {divisionsForSeason.map((d) => (
@@ -302,6 +311,330 @@ function BulkImportPanel({
             {uploading ? 'Importing…' : 'Upload teams CSV'}
           </span>
           <input type="file" accept=".csv" onChange={handleFileChange} disabled={uploading} style={{ display: 'none' }} />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function normalizeCoachRole(raw: string): CoachRole {
+  const key = raw.toLowerCase().replace(/[\s_-]+/g, '');
+  if (key === 'assistantcoach' || key === 'assistant') return 'assistant_coach';
+  if (key === 'volunteer') return 'volunteer';
+  return 'head_coach'; // default — covers "Head Coach", "Coach", blank, or anything unrecognized
+}
+
+// Looks up a column by header name (case-insensitive, exact match after
+// trimming) — used by both the coach and roster importers below so a
+// reordered or partially-filled-out CSV header still works.
+function columnIndex(header: string[], name: string): number {
+  return header.findIndex((h) => h.trim().toLowerCase() === name);
+}
+
+function RosterAndCoachImportPanel({
+  organizationId,
+  divisionsForSeason,
+  teams,
+}: {
+  organizationId: string;
+  divisionsForSeason: Division[];
+  teams: Team[];
+}) {
+  const [divisionId, setDivisionId] = useState(divisionsForSeason[0]?.id ?? '');
+
+  const divisionTeams = teams.filter((t) => t.division_id === divisionId);
+
+  return (
+    <div className="form-card" style={{ marginBottom: 24 }}>
+      <h2 style={{ margin: 0 }}>Rosters &amp; coaches</h2>
+      <p style={{ fontSize: 13, color: 'var(--gray)', marginTop: 4, marginBottom: 12 }}>
+        Bulk-add players and coaches to one division&apos;s teams from a CSV — for backfilling a roster you
+        already have in a spreadsheet, rather than sending everyone through registration and the draft. Someone
+        who isn&apos;t a leago account yet gets a placeholder record created automatically; including an email
+        lets them claim it later just by signing up with that same address (and keeps a re-upload from creating
+        a duplicate).
+      </p>
+
+      <div style={{ marginBottom: 16 }}>
+        <label className="form-label">Division</label>
+        <select value={divisionId} onChange={(e) => setDivisionId(e.target.value)} className="form-input" style={{ width: 'auto' }}>
+          {divisionsForSeason.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 20 }}>
+        <CoachImportSection organizationId={organizationId} divisionId={divisionId} divisionTeams={divisionTeams} />
+        <RosterImportSection organizationId={organizationId} divisionId={divisionId} divisionTeams={divisionTeams} />
+      </div>
+    </div>
+  );
+}
+
+function CoachImportSection({
+  organizationId,
+  divisionId,
+  divisionTeams,
+}: {
+  organizationId: string;
+  divisionId: string;
+  divisionTeams: Team[];
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<string | null>(null);
+
+  function handleDownloadTemplate() {
+    const team1 = divisionTeams[0]?.name ?? 'Red Sox';
+    const team2 = divisionTeams[1]?.name ?? team1;
+    downloadCsv('coaches-template.csv', [
+      ['Team', 'First Name', 'Last Name', 'Email', 'Role'],
+      [team1, 'Jamie', 'Rivera', 'jamie.rivera@example.com', 'Head Coach'],
+      [team2, 'Sam', 'Okafor', '', 'Assistant Coach'],
+    ]);
+  }
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!divisionId) {
+      setError('Pick a division first.');
+      e.target.value = '';
+      return;
+    }
+
+    setUploading(true);
+    setError(null);
+    setSummary(null);
+
+    try {
+      const text = await file.text();
+      const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      if (lines.length < 2) {
+        throw new Error('That file has no data rows — download the template for the exact format.');
+      }
+
+      const header = parseCsvLine(lines[0]);
+      const idx = {
+        team: columnIndex(header, 'team'),
+        first: columnIndex(header, 'first name'),
+        last: columnIndex(header, 'last name'),
+        email: columnIndex(header, 'email'),
+        role: columnIndex(header, 'role'),
+      };
+      if (idx.team === -1 || idx.first === -1 || idx.last === -1) {
+        throw new Error('The CSV needs at least Team, First Name, and Last Name columns — download the template for the exact format.');
+      }
+
+      const rows: CoachImportRow[] = [];
+      const unmatchedTeams = new Set<string>();
+
+      for (const cols of lines.slice(1).map(parseCsvLine)) {
+        const teamName = (cols[idx.team] ?? '').trim();
+        const firstName = (cols[idx.first] ?? '').trim();
+        const lastName = (cols[idx.last] ?? '').trim();
+        if (!teamName && !firstName && !lastName) continue;
+
+        const team = divisionTeams.find((t) => t.name.toLowerCase() === teamName.toLowerCase());
+        if (!team) {
+          if (teamName) unmatchedTeams.add(teamName);
+          continue;
+        }
+        if (!firstName || !lastName) continue;
+
+        rows.push({
+          teamId: team.id,
+          firstName,
+          lastName,
+          email: idx.email !== -1 ? (cols[idx.email] ?? '').trim() : '',
+          role: normalizeCoachRole(idx.role !== -1 ? (cols[idx.role] ?? '').trim() : ''),
+        });
+      }
+
+      if (rows.length === 0) {
+        throw new Error(
+          unmatchedTeams.size > 0
+            ? `No rows matched a team in this division. Unrecognized team name(s): ${Array.from(unmatchedTeams).join(', ')}.`
+            : 'No valid rows found in that file.'
+        );
+      }
+
+      const result = await bulkImportCoaches(organizationId, divisionId, rows);
+      if ('error' in result) {
+        setError(result.error);
+        return;
+      }
+
+      const parts = [
+        `Added ${result.staffed} coach/staff assignment${result.staffed === 1 ? '' : 's'}${
+          result.peopleCreated > 0 ? ` (${result.peopleCreated} new person record${result.peopleCreated === 1 ? '' : 's'} created)` : ''
+        }.`,
+      ];
+      if (result.skipped > 0) parts.push(`Skipped ${result.skipped} already on that team.`);
+      if (unmatchedTeams.size > 0) parts.push(`Skipped unrecognized team name(s): ${Array.from(unmatchedTeams).join(', ')}.`);
+      setSummary(parts.join(' '));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setUploading(false);
+      e.target.value = '';
+    }
+  }
+
+  return (
+    <div>
+      <h3 style={{ fontSize: 14, marginBottom: 4 }}>Coaches</h3>
+      <p style={{ fontSize: 12, color: 'var(--gray)', marginBottom: 10 }}>
+        Columns: Team, First Name, Last Name, Email (optional), Role (Head Coach / Assistant Coach / Volunteer —
+        defaults to Head Coach if left blank).
+      </p>
+      {error && <p style={{ color: '#B23A2E', fontSize: 13 }}>{error}</p>}
+      {summary && <p style={{ color: 'var(--green-dark)', fontSize: 13 }}>{summary}</p>}
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <button onClick={handleDownloadTemplate} className="btn-small">
+          Download template
+        </button>
+        <label style={{ cursor: 'pointer' }}>
+          <span className="btn-small" style={{ display: 'inline-block' }}>
+            {uploading ? 'Importing…' : 'Upload coaches CSV'}
+          </span>
+          <input type="file" accept=".csv" onChange={handleFileChange} disabled={uploading || !divisionId} style={{ display: 'none' }} />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function RosterImportSection({
+  organizationId,
+  divisionId,
+  divisionTeams,
+}: {
+  organizationId: string;
+  divisionId: string;
+  divisionTeams: Team[];
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<string | null>(null);
+
+  function handleDownloadTemplate() {
+    const team1 = divisionTeams[0]?.name ?? 'Red Sox';
+    downloadCsv('roster-template.csv', [
+      ['Team', 'First Name', 'Last Name', 'Jersey Number', 'Email'],
+      [team1, 'Avery', 'Chen', '7', ''],
+      [team1, 'Jordan', 'Patel', '14', ''],
+    ]);
+  }
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!divisionId) {
+      setError('Pick a division first.');
+      e.target.value = '';
+      return;
+    }
+
+    setUploading(true);
+    setError(null);
+    setSummary(null);
+
+    try {
+      const text = await file.text();
+      const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      if (lines.length < 2) {
+        throw new Error('That file has no data rows — download the template for the exact format.');
+      }
+
+      const header = parseCsvLine(lines[0]);
+      const idx = {
+        team: columnIndex(header, 'team'),
+        first: columnIndex(header, 'first name'),
+        last: columnIndex(header, 'last name'),
+        jersey: columnIndex(header, 'jersey number'),
+        email: columnIndex(header, 'email'),
+      };
+      if (idx.team === -1 || idx.first === -1 || idx.last === -1) {
+        throw new Error('The CSV needs at least Team, First Name, and Last Name columns — download the template for the exact format.');
+      }
+
+      const rows: RosterImportRow[] = [];
+      const unmatchedTeams = new Set<string>();
+
+      for (const cols of lines.slice(1).map(parseCsvLine)) {
+        const teamName = (cols[idx.team] ?? '').trim();
+        const firstName = (cols[idx.first] ?? '').trim();
+        const lastName = (cols[idx.last] ?? '').trim();
+        if (!teamName && !firstName && !lastName) continue;
+
+        const team = divisionTeams.find((t) => t.name.toLowerCase() === teamName.toLowerCase());
+        if (!team) {
+          if (teamName) unmatchedTeams.add(teamName);
+          continue;
+        }
+        if (!firstName || !lastName) continue;
+
+        rows.push({
+          teamId: team.id,
+          firstName,
+          lastName,
+          jerseyNumber: idx.jersey !== -1 ? (cols[idx.jersey] ?? '').trim() : '',
+          email: idx.email !== -1 ? (cols[idx.email] ?? '').trim() : '',
+        });
+      }
+
+      if (rows.length === 0) {
+        throw new Error(
+          unmatchedTeams.size > 0
+            ? `No rows matched a team in this division. Unrecognized team name(s): ${Array.from(unmatchedTeams).join(', ')}.`
+            : 'No valid rows found in that file.'
+        );
+      }
+
+      const result = await bulkImportRoster(organizationId, divisionId, rows);
+      if ('error' in result) {
+        setError(result.error);
+        return;
+      }
+
+      const parts = [
+        `Added ${result.registered} player${result.registered === 1 ? '' : 's'}${
+          result.peopleCreated > 0 ? ` (${result.peopleCreated} new person record${result.peopleCreated === 1 ? '' : 's'} created)` : ''
+        }.`,
+      ];
+      if (result.skipped > 0) parts.push(`Skipped ${result.skipped} already registered this season.`);
+      if (unmatchedTeams.size > 0) parts.push(`Skipped unrecognized team name(s): ${Array.from(unmatchedTeams).join(', ')}.`);
+      setSummary(parts.join(' '));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setUploading(false);
+      e.target.value = '';
+    }
+  }
+
+  return (
+    <div>
+      <h3 style={{ fontSize: 14, marginBottom: 4 }}>Roster</h3>
+      <p style={{ fontSize: 12, color: 'var(--gray)', marginBottom: 10 }}>
+        Columns: Team, First Name, Last Name, Jersey Number (optional), Email (optional). Goes straight in as a
+        confirmed registration for this season — this skips the normal sign-up/draft flow on purpose.
+      </p>
+      {error && <p style={{ color: '#B23A2E', fontSize: 13 }}>{error}</p>}
+      {summary && <p style={{ color: 'var(--green-dark)', fontSize: 13 }}>{summary}</p>}
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <button onClick={handleDownloadTemplate} className="btn-small">
+          Download template
+        </button>
+        <label style={{ cursor: 'pointer' }}>
+          <span className="btn-small" style={{ display: 'inline-block' }}>
+            {uploading ? 'Importing…' : 'Upload roster CSV'}
+          </span>
+          <input type="file" accept=".csv" onChange={handleFileChange} disabled={uploading || !divisionId} style={{ display: 'none' }} />
         </label>
       </div>
     </div>
