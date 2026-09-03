@@ -76,6 +76,11 @@ interface GenerateScheduleInput {
   // enforce maxGamesPerWeek. Defaults to 0 (Sunday) when omitted. Ignored
   // entirely when maxGamesPerWeek isn't set.
   weekStartDay?: number;
+  // Optional weekday (0=Sunday..6=Saturday, migration 0026) to fill FIRST
+  // within every calendar week, before any other configured day — see
+  // Step 1b. Undefined/null means no priority day: dates fill in plain
+  // chronological order, same as before this feature existed.
+  priorityDayOfWeek?: number;
 }
 
 /**
@@ -300,11 +305,20 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
     ) {
       return { error: 'Week start day must be between 0 (Sunday) and 6 (Saturday).' };
     }
+    if (
+      input.priorityDayOfWeek !== undefined &&
+      input.priorityDayOfWeek !== null &&
+      (!Number.isInteger(input.priorityDayOfWeek) || input.priorityDayOfWeek < 0 || input.priorityDayOfWeek > 6)
+    ) {
+      return { error: 'Priority day must be between 0 (Sunday) and 6 (Saturday).' };
+    }
 
     const timeZone = input.timeZone || 'UTC';
     const weekStartDay = input.weekStartDay ?? 0;
     const maxGamesPerWeek =
       input.maxGamesPerWeek !== undefined && input.maxGamesPerWeek !== null ? input.maxGamesPerWeek : null;
+    const priorityDayOfWeek =
+      input.priorityDayOfWeek !== undefined && input.priorityDayOfWeek !== null ? input.priorityDayOfWeek : null;
 
     const admin = createAdminClient();
 
@@ -346,6 +360,36 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
 
     if (gameDates.length === 0) {
       return { error: 'No game dates fall within that range on the configured days.' };
+    }
+
+    // ---- Step 1b: if a priority day is set, move that day's date to the
+    // front of each calendar week's block of dates. Weeks themselves stay
+    // in chronological order — this only reorders WITHIN a week — so Step
+    // 3b's week-number assignment (which just watches the week key change
+    // as it walks gameDates in order) and every date-range/target-reached
+    // check downstream keep working unmodified. The actual effect is in
+    // Step 4: its dateLoop tries gameDates in array order, so the
+    // priority day's slots get first crack at that week's fairness queue
+    // before any other day in the same week is tried — a team's weekly
+    // allotment lands there whenever there's enough slot capacity that
+    // day, without changing which dates are available at all. ----
+    if (priorityDayOfWeek !== null) {
+      const weeks: Date[][] = [];
+      let currentWeekKey: string | null = null;
+      for (const date of gameDates) {
+        const wk = getWeekKey(date, weekStartDay);
+        if (wk !== currentWeekKey) {
+          weeks.push([]);
+          currentWeekKey = wk;
+        }
+        weeks[weeks.length - 1].push(date);
+      }
+      gameDates.length = 0;
+      for (const week of weeks) {
+        const priority = week.filter((d) => d.getDay() === priorityDayOfWeek);
+        const rest = week.filter((d) => d.getDay() !== priorityDayOfWeek);
+        gameDates.push(...priority, ...rest);
+      }
     }
 
     // ---- Step 2: existing events across the WHOLE organization (any
@@ -884,6 +928,7 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
         end_date: input.endDate,
         max_games_per_week: maxGamesPerWeek,
         week_start_day: weekStartDay,
+        priority_day_of_week: priorityDayOfWeek,
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'division_id' }

@@ -54,6 +54,7 @@ interface SavedSettings {
   end_date: string;
   max_games_per_week: number | null;
   week_start_day: number;
+  priority_day_of_week: number | null;
 }
 
 // Regroups a flat saved slot list back into the picker's per-day,
@@ -348,6 +349,9 @@ function ScheduleGenerator({
     initialSettings?.max_games_per_week ? String(initialSettings.max_games_per_week) : ''
   );
   const [weekStartDay, setWeekStartDay] = useState(String(initialSettings?.week_start_day ?? 0));
+  const [priorityDayOfWeek, setPriorityDayOfWeek] = useState(
+    initialSettings?.priority_day_of_week != null ? String(initialSettings.priority_day_of_week) : ''
+  );
   const [error, setError] = useState<string | null>(null);
   interface UnplacedMatchup {
     homeTeamId: string;
@@ -520,6 +524,7 @@ function ScheduleGenerator({
         endDate,
         maxGamesPerWeek: maxGamesPerWeekNum ?? undefined,
         weekStartDay: Number(weekStartDay),
+        priorityDayOfWeek: priorityDayOfWeek === '' ? undefined : Number(priorityDayOfWeek),
         // Read here (in the browser) rather than on the server, since the
         // server action runs on Vercel in UTC and has no idea what "5pm"
         // is supposed to mean for this league.
@@ -798,6 +803,27 @@ function ScheduleGenerator({
       <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -4, marginBottom: 12 }}>
         Which day begins a &ldquo;week&rdquo; for the max-games-per-week limit above — e.g. Sunday for a Sun–Sat
         week, or Monday for a Mon–Sun week. Only matters if you set a limit.
+      </p>
+
+      <label className="form-label">Priority day (optional)</label>
+      <select
+        value={priorityDayOfWeek}
+        onChange={(e) => setPriorityDayOfWeek(e.target.value)}
+        className="form-input"
+        style={{ maxWidth: 200 }}
+      >
+        <option value="">No priority — fill dates in order</option>
+        {DAY_NAMES.map((name, i) => (
+          <option key={i} value={i}>
+            {name}
+          </option>
+        ))}
+      </select>
+      <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -4, marginBottom: 12 }}>
+        Fills this day&apos;s slots first within every week, before any other configured day — so if you&apos;re
+        running 3 games/week, picking Saturday claims everyone&apos;s Saturday slot before the other two games
+        of the week get placed. Needs enough Saturday time/field slots to cover roughly half your teams each
+        week (two teams share a game) — with too few, some teams will still miss it no matter the priority.
       </p>
 
       {error && <p style={{ color: '#B23A2E', fontSize: 14 }}>{error}</p>}
