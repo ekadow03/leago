@@ -267,6 +267,7 @@ export default function ScheduleBuilder({
   const [error, setError] = useState<string | null>(null);
   const [selectedSeasonId, setSelectedSeasonId] = useState(seasons[0]?.id ?? '');
   const [selectedDivisionId, setSelectedDivisionId] = useState('');
+  const [selectedTeamId, setSelectedTeamId] = useState('');
 
   const [type, setType] = useState<'game' | 'practice' | 'volunteer_shift' | 'league_event'>('game');
   const [title, setTitle] = useState('');
@@ -355,8 +356,15 @@ export default function ScheduleBuilder({
   }
 
   const filteredEvents = events.filter(
-    (ev) => ev.season_id === selectedSeasonId && (!selectedDivisionId || ev.division_id === selectedDivisionId)
+    (ev) =>
+      ev.season_id === selectedSeasonId &&
+      (!selectedDivisionId || ev.division_id === selectedDivisionId) &&
+      (!selectedTeamId || ev.home_team_id === selectedTeamId || ev.away_team_id === selectedTeamId)
   );
+
+  const teamsInSelectedDivision = selectedDivisionId
+    ? teams.filter((t) => t.division_id === selectedDivisionId).sort((a, b) => a.name.localeCompare(b.name))
+    : [];
 
   // Group by week_number so admins reviewing an archived schedule can scan
   // it week-by-week rather than as one long date-ordered list. Events with
@@ -562,7 +570,17 @@ export default function ScheduleBuilder({
   function handleSeasonChange(seasonId: string) {
     setSelectedSeasonId(seasonId);
     setSelectedDivisionId('');
+    setSelectedTeamId('');
     setSelectedIds(new Set());
+  }
+
+  // A team only makes sense within the division it belongs to — picking
+  // a new division (or clearing back to "All divisions") always clears
+  // any team filter from the previous one, rather than silently keeping
+  // a selectedTeamId that no longer matches anything shown.
+  function handleDivisionChange(divisionId: string) {
+    setSelectedDivisionId(divisionId);
+    setSelectedTeamId('');
   }
 
   async function handleCreate(e: React.FormEvent, allowConflicts = false) {
@@ -1459,7 +1477,7 @@ export default function ScheduleBuilder({
             </select>
             <select
               value={selectedDivisionId}
-              onChange={(e) => setSelectedDivisionId(e.target.value)}
+              onChange={(e) => handleDivisionChange(e.target.value)}
               className="form-input"
               style={{ marginBottom: 0, width: 'auto' }}
             >
@@ -1470,6 +1488,21 @@ export default function ScheduleBuilder({
                 </option>
               ))}
             </select>
+            {selectedDivisionId && (
+              <select
+                value={selectedTeamId}
+                onChange={(e) => setSelectedTeamId(e.target.value)}
+                className="form-input"
+                style={{ marginBottom: 0, width: 'auto' }}
+              >
+                <option value="">All teams</option>
+                {teamsInSelectedDivision.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            )}
             <button onClick={handlePublishAll} className="btn-small">
               Publish all drafts
             </button>
@@ -1494,7 +1527,7 @@ export default function ScheduleBuilder({
             </button>
           </div>
           <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -12, marginBottom: 20 }}>
-            Both exports download a CSV of the games currently shown above (filtered by the season/division
+            Both exports download a CSV of the games currently shown above (filtered by the season/division/team
             picked here), formatted for that platform&apos;s bulk schedule import. Team names must already match
             the roster already set up on that platform exactly.
           </p>
