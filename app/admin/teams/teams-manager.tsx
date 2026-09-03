@@ -3,6 +3,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { createTeam, deleteTeam, deleteAllTeamsInDivision } from '@/lib/actions/teams';
 import { bulkCreateTeams } from '@/lib/actions/team-import';
 import { bulkImportCoaches, type CoachImportRow, type CoachRole } from '@/lib/actions/coach-import';
@@ -79,11 +80,13 @@ export default function TeamsManager({
   seasons,
   divisions,
   initialTeams,
+  initialTeamStats,
 }: {
   organizationId: string;
   seasons: Season[];
   divisions: Division[];
   initialTeams: Team[];
+  initialTeamStats: Record<string, { players: number; coaches: number }>;
 }) {
   const [teams, setTeams] = useState(initialTeams);
   const [selectedSeasonId, setSelectedSeasonId] = useState(seasons[0]?.id ?? '');
@@ -157,6 +160,7 @@ export default function TeamsManager({
               organizationId={organizationId}
               division={d}
               teams={teams.filter((t) => t.division_id === d.id)}
+              teamStats={initialTeamStats}
               onTeamAdded={handleTeamAdded}
               onTeamRemoved={handleTeamRemoved}
               onDivisionTeamsCleared={handleDivisionTeamsCleared}
@@ -740,6 +744,7 @@ function DivisionTeamsCard({
   organizationId,
   division,
   teams,
+  teamStats,
   onTeamAdded,
   onTeamRemoved,
   onDivisionTeamsCleared,
@@ -747,10 +752,12 @@ function DivisionTeamsCard({
   organizationId: string;
   division: Division;
   teams: Team[];
+  teamStats: Record<string, { players: number; coaches: number }>;
   onTeamAdded: (team: Team) => void;
   onTeamRemoved: (teamId: string) => void;
   onDivisionTeamsCleared: (divisionId: string) => void;
 }) {
+  const router = useRouter();
   const [newTeamName, setNewTeamName] = useState('');
   const [adding, setAdding] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -838,18 +845,55 @@ function DivisionTeamsCard({
       </div>
 
       {teams.length > 0 && (
-        <div className="chip-list" style={{ marginTop: 12 }}>
-          {teams.map((t) => (
-            <span key={t.id} className="chip">
-              <Link href={`/admin/teams/${t.id}`} style={{ color: 'inherit', textDecoration: 'none' }}>
-                {t.name}
-              </Link>
-              <button type="button" onClick={() => handleRemoveTeam(t)} disabled={removingId === t.id}>
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 12 }}>
+          <thead>
+            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border)' }}>
+              <th style={{ padding: '6px 8px' }}>Team</th>
+              <th style={{ padding: '6px 8px' }}>Players</th>
+              <th style={{ padding: '6px 8px' }}>Coaches</th>
+              <th style={{ padding: '6px 8px' }} />
+            </tr>
+          </thead>
+          <tbody>
+            {teams.map((t) => {
+              const stats = teamStats[t.id] ?? { players: 0, coaches: 0 };
+              return (
+                <tr
+                  key={t.id}
+                  onClick={() => router.push(`/admin/teams/${t.id}`)}
+                  style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--gray-light, rgba(0,0,0,0.03))')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                >
+                  <td style={{ padding: '6px 8px' }}>
+                    <Link
+                      href={`/admin/teams/${t.id}`}
+                      style={{ color: 'var(--green-dark)', fontWeight: 500 }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {t.name}
+                    </Link>
+                  </td>
+                  <td style={{ padding: '6px 8px' }}>{stats.players}</td>
+                  <td style={{ padding: '6px 8px' }}>{stats.coaches}</td>
+                  <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleRemoveTeam(t);
+                      }}
+                      disabled={removingId === t.id}
+                      className="btn-small"
+                    >
+                      {removingId === t.id ? 'Removing…' : 'Remove'}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       )}
 
       {error && <p style={{ color: '#B23A2E', fontSize: 14 }}>{error}</p>}

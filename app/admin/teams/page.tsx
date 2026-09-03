@@ -67,6 +67,36 @@ export default async function AdminTeamsPage() {
         .order('name', { ascending: true })
     : { data: [] as { id: string; name: string; division_id: string }[] };
 
+  const teamIds = (teams ?? []).map((t) => t.id);
+
+  // Per-team player/coach counts for the teams table below — fetched as
+  // raw team_id rows and counted here rather than a grouped query, since
+  // supabase-js has no simple "count per group" select. Mirrors the same
+  // "rostered" definition roster-import.ts's dedupe check uses (pending
+  // or confirmed only — a canceled/waitlisted registration doesn't count
+  // as being on the team).
+  const { data: rosterRows } = teamIds.length
+    ? await supabase
+        .from('registrations')
+        .select('team_id')
+        .eq('registration_type', 'player')
+        .in('status', ['pending', 'confirmed'])
+        .in('team_id', teamIds)
+    : { data: [] as { team_id: string | null }[] };
+
+  const { data: staffRows } = teamIds.length
+    ? await supabase.from('team_staff').select('team_id').in('team_id', teamIds)
+    : { data: [] as { team_id: string }[] };
+
+  const teamStats: Record<string, { players: number; coaches: number }> = {};
+  for (const id of teamIds) teamStats[id] = { players: 0, coaches: 0 };
+  for (const r of rosterRows ?? []) {
+    if (r.team_id && teamStats[r.team_id]) teamStats[r.team_id].players++;
+  }
+  for (const s of staffRows ?? []) {
+    if (teamStats[s.team_id]) teamStats[s.team_id].coaches++;
+  }
+
   return (
     <div className="admin-page">
       <Nav />
@@ -81,6 +111,7 @@ export default async function AdminTeamsPage() {
           seasons={seasons ?? []}
           divisions={divisions ?? []}
           initialTeams={teams ?? []}
+          initialTeamStats={teamStats}
         />
       </div>
     </div>
