@@ -7,6 +7,7 @@ import { createTeam, deleteTeam, deleteAllTeamsInDivision } from '@/lib/actions/
 import { bulkCreateTeams } from '@/lib/actions/team-import';
 import { bulkImportCoaches, type CoachImportRow, type CoachRole } from '@/lib/actions/coach-import';
 import { bulkImportRoster, type RosterImportRow } from '@/lib/actions/roster-import';
+import { importTeamRosterReport } from '@/lib/actions/team-roster-report-import';
 
 interface Season {
   id: string;
@@ -331,6 +332,94 @@ function columnIndex(header: string[], name: string): number {
   return header.findIndex((h) => h.trim().toLowerCase() === name);
 }
 
+function TeamRosterReportImportSection({
+  organizationId,
+  divisionId,
+}: {
+  organizationId: string;
+  divisionId: string;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<string | null>(null);
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!divisionId) {
+      setError('Pick a division first.');
+      e.target.value = '';
+      return;
+    }
+
+    setUploading(true);
+    setError(null);
+    setSummary(null);
+
+    try {
+      const formData = new FormData();
+      formData.set('file', file);
+
+      const result = await importTeamRosterReport(organizationId, divisionId, formData);
+      if ('error' in result) {
+        setError(result.error);
+        return;
+      }
+
+      const { coachResult, rosterResult, unmatchedTeamNames } = result;
+      const parts = [
+        `Added ${rosterResult.registered} player${rosterResult.registered === 1 ? '' : 's'} and ${coachResult.staffed} coach/staff assignment${
+          coachResult.staffed === 1 ? '' : 's'
+        }${
+          rosterResult.peopleCreated + coachResult.peopleCreated > 0
+            ? ` (${rosterResult.peopleCreated + coachResult.peopleCreated} new person record${
+                rosterResult.peopleCreated + coachResult.peopleCreated === 1 ? '' : 's'
+              } created)`
+            : ''
+        }.`,
+      ];
+      if (rosterResult.skipped > 0) parts.push(`Skipped ${rosterResult.skipped} player${rosterResult.skipped === 1 ? '' : 's'} already registered this season.`);
+      if (coachResult.skipped > 0) parts.push(`Skipped ${coachResult.skipped} staff assignment${coachResult.skipped === 1 ? '' : 's'} already on that team.`);
+      if (unmatchedTeamNames.length > 0) {
+        parts.push(`Skipped team(s) not found in this division: ${unmatchedTeamNames.join(', ')}.`);
+      }
+      setSummary(parts.join(' '));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setUploading(false);
+      e.target.value = '';
+    }
+  }
+
+  return (
+    <div>
+      <h3 style={{ fontSize: 14, marginBottom: 4 }}>Team Roster Report (.xlsx)</h3>
+      <p style={{ fontSize: 12, color: 'var(--gray)', marginBottom: 10 }}>
+        Upload the &quot;Team Roster Report&quot; export as-is — players and team personnel for every team in
+        this division are read straight from the file and matched to teams by name. A player&apos;s parent/
+        guardian contact from the report is kept as who submitted their registration, not attached to the
+        player&apos;s own record. &quot;Team Manager&quot; is imported as head coach, &quot;Assistant Coach&quot;
+        as assistant coach, and other roles (Score Keeper, Team Parent, etc.) as volunteers.
+      </p>
+      {error && <p style={{ color: '#B23A2E', fontSize: 13 }}>{error}</p>}
+      {summary && <p style={{ color: 'var(--green-dark)', fontSize: 13 }}>{summary}</p>}
+      <label style={{ cursor: 'pointer' }}>
+        <span className="btn-small" style={{ display: 'inline-block' }}>
+          {uploading ? 'Importing…' : 'Upload Team Roster Report'}
+        </span>
+        <input
+          type="file"
+          accept=".xlsx"
+          onChange={handleFileChange}
+          disabled={uploading || !divisionId}
+          style={{ display: 'none' }}
+        />
+      </label>
+    </div>
+  );
+}
+
 function RosterAndCoachImportPanel({
   organizationId,
   divisionsForSeason,
@@ -348,11 +437,10 @@ function RosterAndCoachImportPanel({
     <div className="form-card" style={{ marginBottom: 24 }}>
       <h2 style={{ margin: 0 }}>Rosters &amp; coaches</h2>
       <p style={{ fontSize: 13, color: 'var(--gray)', marginTop: 4, marginBottom: 12 }}>
-        Bulk-add players and coaches to one division&apos;s teams from a CSV — for backfilling a roster you
-        already have in a spreadsheet, rather than sending everyone through registration and the draft. Someone
-        who isn&apos;t a leago account yet gets a placeholder record created automatically; including an email
-        lets them claim it later just by signing up with that same address (and keeps a re-upload from creating
-        a duplicate).
+        Bulk-add players and coaches to one division&apos;s teams — for backfilling a roster you already have
+        elsewhere, rather than sending everyone through registration and the draft. Someone who isn&apos;t a
+        leago account yet gets a placeholder record created automatically; including an email lets them claim
+        it later just by signing up with that same address (and keeps a re-upload from creating a duplicate).
       </p>
 
       <div style={{ marginBottom: 16 }}>
@@ -366,9 +454,16 @@ function RosterAndCoachImportPanel({
         </select>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 20 }}>
-        <CoachImportSection organizationId={organizationId} divisionId={divisionId} divisionTeams={divisionTeams} />
-        <RosterImportSection organizationId={organizationId} divisionId={divisionId} divisionTeams={divisionTeams} />
+      <TeamRosterReportImportSection organizationId={organizationId} divisionId={divisionId} />
+
+      <div style={{ borderTop: '1px solid var(--border)', margin: '20px 0', paddingTop: 16 }}>
+        <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: 0, marginBottom: 12 }}>
+          Or, if your roster isn&apos;t in that format, use these plain CSV templates instead:
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 20 }}>
+          <CoachImportSection organizationId={organizationId} divisionId={divisionId} divisionTeams={divisionTeams} />
+          <RosterImportSection organizationId={organizationId} divisionId={divisionId} divisionTeams={divisionTeams} />
+        </div>
       </div>
     </div>
   );

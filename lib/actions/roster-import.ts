@@ -17,6 +17,20 @@
 // A row with no email still gets a placeholder person created (see
 // coach-import.ts's comment on this same tradeoff) — including an email
 // avoids creating a duplicate person on a re-upload.
+//
+// `email` above is the PLAYER's own email, when a source actually has
+// one (e.g. an older teen with their own address) — used to match/dedupe
+// the player's own person record. The optional guardian* fields are a
+// separate identity entirely: some rosters (e.g. a "Team Roster Report"
+// export) only carry an "Account" — a parent/guardian's name/email/
+// phone — never the player's own contact info. Attaching THAT email to
+// the player's own person row would be wrong (it isn't theirs, and could
+// let the wrong person's account later match to a child's record) — so
+// when guardian info is given, it resolves to its OWN person (matched/
+// created by guardianEmail, same as everything else here) and is linked
+// via registrations.submitted_by_person_id, which is exactly what that
+// column is for ("who submitted this registration, if not the
+// registrant themselves").
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { requireOrgPermission } from '@/lib/org-context';
@@ -27,7 +41,11 @@ export interface RosterImportRow {
   firstName: string;
   lastName: string;
   jerseyNumber: string; // '' when not provided
-  email: string; // '' when not provided
+  email: string; // '' when not provided — the PLAYER's own email, if any
+  guardianFirstName?: string;
+  guardianLastName?: string;
+  guardianEmail?: string;
+  guardianPhone?: string;
 }
 
 type BulkImportRosterResult =
@@ -52,6 +70,10 @@ export async function bulkImportRoster(
         lastName: r.lastName.trim(),
         email: r.email.trim().toLowerCase(),
         jerseyNumber: r.jerseyNumber.trim(),
+        guardianFirstName: r.guardianFirstName?.trim() || '',
+        guardianLastName: r.guardianLastName?.trim() || '',
+        guardianEmail: r.guardianEmail?.trim().toLowerCase() || '',
+        guardianPhone: r.guardianPhone?.trim() || '',
       }))
       .filter((r) => r.teamId && r.firstName && r.lastName);
 
@@ -127,6 +149,68 @@ export async function bulkImportRoster(
 
     const allPersonIds = Array.from(new Set(valid.map((row, i) => resolvePersonId(row, i))));
 
+    // ---- Resolve guardian/submitter rows the same way, but as a fully
+    // separate identity pool from the players above — a guardian's email
+    // must never collide with (or get merged into) a player's own person
+    // record just because both maps use "match by email". Only rows that
+    // actually carry a guardianEmail participate; rows with a guardian
+    // name but no email still get a placeholder (mirrors the no-email
+    // player behavior), keyed per-row so two guardians who both lack an
+    // email don't get merged into one person. ----
+    const guardianRows = valid
+      .map((row, i) => ({ row, i }))
+      .filter(({ row }) => row.guardianFirstName || row.guardianLastName || row.guardianEmail || row.guardianPhone);
+
+    const guardianEmails = Array.from(new Set(guardianRows.map(({ row }) => row.guardianEmail).filter(Boolean)));
+    const { data: existingGuardians } =
+      guardianEmails.length > 0
+        ? await admin.from('people').select('id, email').in('email', guardianEmails)
+        : { data: [] as { id: string; email: string | null }[] };
+    const guardianIdByEmail = new Map<string, string>();
+    for (const p of existingGuardians ?? []) {
+      if (p.email) guardianIdByEmail.set(p.email.toLowerCase(), p.id);
+    }
+
+    const newGuardianKeyForRow = new Map<number, string>();
+    const newGuardiansByKey = new Map<
+      string,
+      { first_name: string; last_name: string; email: string | null; phone: string | null }
+    >();
+    guardianRows.forEach(({ row, i }) => {
+      if (row.guardianEmail && guardianIdByEmail.has(row.guardianEmail)) return;
+      const key = row.guardianEmail ? `email:${row.guardianEmail}` : `noemail:${i}`;
+      newGuardianKeyForRow.set(i, key);
+      if (!newGuardiansByKey.has(key)) {
+        newGuardiansByKey.set(key, {
+          first_name: row.guardianFirstName || 'Unknown',
+          last_name: row.guardianLastName || 'Guardian',
+          email: row.guardianEmail || null,
+          phone: row.guardianPhone || null,
+        });
+      }
+    });
+
+    const guardianKeyToNewPersonId = new Map<string, string>();
+    if (newGuardiansByKey.size > 0) {
+      const keys = Array.from(newGuardiansByKey.keys());
+      const { data: inserted, error: guardianError } = await admin
+        .from('people')
+        .insert(keys.map((k) => newGuardiansByKey.get(k)!))
+        .select('id');
+      if (guardianError || !inserted) {
+        return { error: `Failed to create guardian contacts: ${guardianError?.message ?? 'unknown error'}` };
+      }
+      keys.forEach((k, idx) => guardianKeyToNewPersonId.set(k, inserted[idx].id));
+      peopleCreated += inserted.length;
+    }
+
+    function resolveGuardianPersonId(row: RosterImportRow, i: number): string | null {
+      if (!row.guardianFirstName && !row.guardianLastName && !row.guardianEmail && !row.guardianPhone) return null;
+      if (row.guardianEmail && guardianIdByEmail.has(row.guardianEmail)) return guardianIdByEmail.get(row.guardianEmail)!;
+      const key = newGuardianKeyForRow.get(i);
+      return key ? (guardianKeyToNewPersonId.get(key) ?? null) : null;
+    }
+
     // A player can only have one active (pending/confirmed) registration
     // per season — see 0002_registrations.sql's
     // unique(person_id, season_id, registration_type, status). Skip
@@ -151,6 +235,7 @@ export async function bulkImportRoster(
       registration_type: 'player';
       status: 'confirmed';
       jersey_number: string | null;
+      submitted_by_person_id: string | null;
     }[] = [];
     let skipped = 0;
 
@@ -170,6 +255,7 @@ export async function bulkImportRoster(
         registration_type: 'player',
         status: 'confirmed',
         jersey_number: row.jerseyNumber || null,
+        submitted_by_person_id: resolveGuardianPersonId(row, i),
       });
     });
 
