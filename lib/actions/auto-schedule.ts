@@ -674,40 +674,72 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
         // can actually use THIS slot — not a fixed positional zip, since
         // the front of the queue might be blocked by a coach conflict,
         // a maxed-out weekly cap, or a team that already played today,
-        // while something further back fits fine.
+        // while something further back fits fine. If NOTHING in the
+        // current queue works, that doesn't necessarily mean this slot
+        // is unfillable: the queue at any moment only holds a partial
+        // round (whatever's left of the round that was in flight when
+        // it was last refilled), and that leftover tail can easily
+        // consist entirely of pairs whose teams already played earlier
+        // TODAY — especially right after a priority day (Step 1b) pulls
+        // in a brand-new round mid-day, which necessarily re-pairs every
+        // team, including ones already placed a few slots ago. A
+        // DIFFERENT round elsewhere in the same round-robin cycle still
+        // pairs up today's remaining free teams, since a full cycle
+        // guarantees every team meets every other team exactly once. So:
+        // keep pulling in additional rounds and scanning only the newly
+        // appended tail (already-scanned entries can't have changed
+        // eligibility mid-search), as long as 2+ teams are still free
+        // today — stopping once a full extra lap of the cycle has been
+        // tried without success, which can only mean every remaining
+        // candidate pairing is blocked by something else (a weekly cap
+        // or coach conflict), not that it doesn't exist in the cycle.
         let chosenIdx = -1;
         let chosenIsoTime = '';
         let chosenStartMs = 0;
         let chosenEndMs = 0;
+        let scanFrom = 0;
+        let extraRoundsPulled = 0;
 
-        for (let qi = 0; qi < pendingQueue.length; qi++) {
-          // Not home/away yet — that's decided below, once we know a
-          // slot actually works for this pair.
-          const [teamX, teamY] = pendingQueue[qi];
-          if (usedTeamsToday.has(teamX) || usedTeamsToday.has(teamY)) continue;
+        searchLoop: while (true) {
+          for (let qi = scanFrom; qi < pendingQueue.length; qi++) {
+            // Not home/away yet — that's decided below, once we know a
+            // slot actually works for this pair.
+            const [teamX, teamY] = pendingQueue[qi];
+            if (usedTeamsToday.has(teamX) || usedTeamsToday.has(teamY)) continue;
 
-          if (
-            maxGamesPerWeek !== null &&
-            (weeklyCountFor(teamX, weekKey) >= maxGamesPerWeek || weeklyCountFor(teamY, weekKey) >= maxGamesPerWeek)
-          ) {
-            weeklyCapDeferred++;
-            continue;
+            if (
+              maxGamesPerWeek !== null &&
+              (weeklyCountFor(teamX, weekKey) >= maxGamesPerWeek || weeklyCountFor(teamY, weekKey) >= maxGamesPerWeek)
+            ) {
+              weeklyCapDeferred++;
+              continue;
+            }
+
+            const isoTime = zonedDateTimeToIso(date, slot.time, timeZone);
+            const startMs = new Date(isoTime).getTime();
+            const endMs = startMs + input.gameDurationMinutes * 60000;
+
+            if (coachConflictAt(teamX, teamY, startMs, endMs)) {
+              coachConflictsAvoided++;
+              continue;
+            }
+
+            chosenIdx = qi;
+            chosenIsoTime = isoTime;
+            chosenStartMs = startMs;
+            chosenEndMs = endMs;
+            break searchLoop;
           }
 
-          const isoTime = zonedDateTimeToIso(date, slot.time, timeZone);
-          const startMs = new Date(isoTime).getTime();
-          const endMs = startMs + input.gameDurationMinutes * 60000;
+          scanFrom = pendingQueue.length;
+          const teamsStillFreeToday = teamIds.filter((id) => !usedTeamsToday.has(id));
+          if (teamsStillFreeToday.length < 2) break; // no round could ever pair fewer than 2 free teams
+          if (targetReachedFor()) break;
+          if (extraRoundsPulled >= cycleRounds.length) break; // one full extra lap tried — nothing left to find
 
-          if (coachConflictAt(teamX, teamY, startMs, endMs)) {
-            coachConflictsAvoided++;
-            continue;
-          }
-
-          chosenIdx = qi;
-          chosenIsoTime = isoTime;
-          chosenStartMs = startMs;
-          chosenEndMs = endMs;
-          break;
+          roundIndex = (roundIndex + 1) % cycleRounds.length;
+          pendingQueue.push(...cycleRounds[roundIndex]);
+          extraRoundsPulled++;
         }
 
         if (chosenIdx === -1) continue; // no eligible matchup fits this slot today — leave it unused
