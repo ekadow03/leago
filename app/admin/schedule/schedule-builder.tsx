@@ -536,6 +536,8 @@ export default function ScheduleBuilder({
     teamName: string;
     home: number;
     away: number;
+    weekend: number;
+    weekday: number;
   }
   interface MatchupCount {
     teamAId: string;
@@ -550,6 +552,7 @@ export default function ScheduleBuilder({
     rows: BalanceRow[];
     matchups: MatchupCount[];
     matchupMedian: number;
+    weekendMedian: number;
   }
 
   const balanceGameEvents = filteredEvents.filter(
@@ -563,11 +566,26 @@ export default function ScheduleBuilder({
       const divTeams = teams.filter((t) => t.division_id === divId).sort((a, b) => a.name.localeCompare(b.name));
       const homeCounts = new Map<string, number>();
       const awayCounts = new Map<string, number>();
+      const weekendCounts = new Map<string, number>();
+      const weekdayCounts = new Map<string, number>();
       const pairCounts = new Map<string, number>();
       for (const ev of balanceGameEvents) {
         if (ev.division_id !== divId) continue;
         homeCounts.set(ev.home_team_id!, (homeCounts.get(ev.home_team_id!) ?? 0) + 1);
         awayCounts.set(ev.away_team_id!, (awayCounts.get(ev.away_team_id!) ?? 0) + 1);
+        // Sat/Sun in whoever's looking at this screen's own local time —
+        // the same convention this page already uses to display a
+        // game's date/time (new Date(ev.start_time) below), so this
+        // lines up with what an admin actually sees on this page.
+        const gameDay = new Date(ev.start_time).getDay();
+        const isWeekend = gameDay === 0 || gameDay === 6;
+        for (const teamId of [ev.home_team_id!, ev.away_team_id!]) {
+          if (isWeekend) {
+            weekendCounts.set(teamId, (weekendCounts.get(teamId) ?? 0) + 1);
+          } else {
+            weekdayCounts.set(teamId, (weekdayCounts.get(teamId) ?? 0) + 1);
+          }
+        }
         const pairKey = [ev.home_team_id!, ev.away_team_id!].sort().join('|');
         pairCounts.set(pairKey, (pairCounts.get(pairKey) ?? 0) + 1);
       }
@@ -576,6 +594,8 @@ export default function ScheduleBuilder({
         teamName: t.name,
         home: homeCounts.get(t.id) ?? 0,
         away: awayCounts.get(t.id) ?? 0,
+        weekend: weekendCounts.get(t.id) ?? 0,
+        weekday: weekdayCounts.get(t.id) ?? 0,
       }));
       const matchups: MatchupCount[] = [];
       for (let i = 0; i < divTeams.length; i++) {
@@ -592,12 +612,16 @@ export default function ScheduleBuilder({
       }
       const sortedCounts = matchups.map((m) => m.count).sort((a, b) => a - b);
       const matchupMedian = sortedCounts.length > 0 ? sortedCounts[Math.floor(sortedCounts.length / 2)] : 0;
+      const sortedWeekendCounts = rows.map((r) => r.weekend).sort((a, b) => a - b);
+      const weekendMedian =
+        sortedWeekendCounts.length > 0 ? sortedWeekendCounts[Math.floor(sortedWeekendCounts.length / 2)] : 0;
       return {
         divisionId: divId,
         divisionName: division?.name ?? 'Unknown division',
         rows,
         matchups,
         matchupMedian,
+        weekendMedian,
       };
     })
     .filter((db) => db.rows.length > 0);
@@ -1497,7 +1521,7 @@ export default function ScheduleBuilder({
         <p style={{ color: 'var(--gray)' }}>No seasons exist yet — create one first.</p>
       ) : (
         <>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 20, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
             <select
               value={selectedSeasonId}
               onChange={(e) => handleSeasonChange(e.target.value)}
@@ -1538,6 +1562,8 @@ export default function ScheduleBuilder({
                 ))}
               </select>
             )}
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' }}>
             <button onClick={handlePublishAll} className="btn-small">
               Publish all drafts
             </button>
@@ -1547,21 +1573,23 @@ export default function ScheduleBuilder({
             <button onClick={handleExportSportConnect} className="btn-small">
               Export for SportConnect
             </button>
-            <button onClick={() => setShowBalanceReport((s) => !s)} className="btn-small" style={{ marginLeft: 'auto' }}>
-              {showBalanceReport ? 'Hide balance report' : 'Balance report'}
-            </button>
-            <button
-              onClick={() => setShowOpenSlots((s) => !s)}
-              className="btn-small"
-              title={!selectedDivisionId ? 'Pick a single division above to see its open slots' : undefined}
-            >
-              {showOpenSlots ? 'Hide open slots' : 'Open slots'}
-            </button>
-            <button onClick={() => setShowForm((s) => !s)} className="btn-small">
-              {showForm ? 'Cancel' : '+ Add event'}
-            </button>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginLeft: 'auto', flexWrap: 'wrap' }}>
+              <button onClick={() => setShowBalanceReport((s) => !s)} className="btn-small">
+                {showBalanceReport ? 'Hide balance report' : 'Balance report'}
+              </button>
+              <button
+                onClick={() => setShowOpenSlots((s) => !s)}
+                className="btn-small"
+                title={!selectedDivisionId ? 'Pick a single division above to see its open slots' : undefined}
+              >
+                {showOpenSlots ? 'Hide open slots' : 'Open slots'}
+              </button>
+              <button onClick={() => setShowForm((s) => !s)} className="btn-primary">
+                {showForm ? 'Cancel' : '+ Add event'}
+              </button>
+            </div>
           </div>
-          <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: -12, marginBottom: 20 }}>
+          <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: 0, marginBottom: 20 }}>
             Both exports download a CSV of the games currently shown above (filtered by the season/division/team
             picked here), formatted for that platform&apos;s bulk schedule import. Team names must already match
             the roster already set up on that platform exactly.
@@ -1578,17 +1606,21 @@ export default function ScheduleBuilder({
               {divisionBalances.length === 0 && <p style={{ color: 'var(--gray)' }}>No games to check yet.</p>}
               {divisionBalances.map((db) => {
                 const homeAwayFlags = db.rows.filter((r) => Math.abs(r.home - r.away) >= 2);
+                const weekendFlags = db.rows.filter((r) => Math.abs(r.weekend - db.weekendMedian) >= 2);
                 const matchupFlags = db.matchups.filter((m) => Math.abs(m.count - db.matchupMedian) >= 1);
-                const isClean = homeAwayFlags.length === 0 && matchupFlags.length === 0;
+                const isClean = homeAwayFlags.length === 0 && weekendFlags.length === 0 && matchupFlags.length === 0;
                 return (
                   <div key={db.divisionId} style={{ marginBottom: 28 }}>
                     <h3 style={{ fontSize: 14, marginBottom: 4 }}>{db.divisionName}</h3>
                     <p style={{ fontSize: 12, color: isClean ? 'var(--gray)' : '#B23A2E', marginBottom: 10 }}>
                       {isClean
-                        ? 'Looks balanced — every team is within 1 game of even home/away, and matchup counts are even.'
+                        ? 'Looks balanced — every team is within 1 game of even home/away, weekend/weekday split is close to typical, and matchup counts are even.'
                         : [
                             homeAwayFlags.length > 0
                               ? `${homeAwayFlags.length} team(s) with a home/away gap of 2 or more.`
+                              : null,
+                            weekendFlags.length > 0
+                              ? `${weekendFlags.length} team(s) off this division's typical weekend-game count (${db.weekendMedian}) by 2 or more.`
                               : null,
                             matchupFlags.length > 0
                               ? `${matchupFlags.length} matchup(s) off this division's typical count (${db.matchupMedian}).`
@@ -1604,20 +1636,28 @@ export default function ScheduleBuilder({
                           <th style={{ padding: '6px 8px' }}>Team</th>
                           <th style={{ padding: '6px 8px' }}>Home</th>
                           <th style={{ padding: '6px 8px' }}>Away</th>
+                          <th style={{ padding: '6px 8px' }}>Weekend</th>
+                          <th style={{ padding: '6px 8px' }}>Weekday</th>
                           <th style={{ padding: '6px 8px' }}>Total</th>
                         </tr>
                       </thead>
                       <tbody>
                         {db.rows.map((r) => {
-                          const flagged = Math.abs(r.home - r.away) >= 2;
+                          const homeAwayFlagged = Math.abs(r.home - r.away) >= 2;
+                          const weekendFlagged = Math.abs(r.weekend - db.weekendMedian) >= 2;
                           return (
                             <tr
                               key={r.teamId}
-                              style={{ borderBottom: '1px solid var(--border)', background: flagged ? '#FBEAE8' : undefined }}
+                              style={{
+                                borderBottom: '1px solid var(--border)',
+                                background: homeAwayFlagged || weekendFlagged ? '#FBEAE8' : undefined,
+                              }}
                             >
                               <td style={{ padding: '6px 8px' }}>{r.teamName}</td>
-                              <td style={{ padding: '6px 8px', color: flagged ? '#B23A2E' : undefined }}>{r.home}</td>
-                              <td style={{ padding: '6px 8px', color: flagged ? '#B23A2E' : undefined }}>{r.away}</td>
+                              <td style={{ padding: '6px 8px', color: homeAwayFlagged ? '#B23A2E' : undefined }}>{r.home}</td>
+                              <td style={{ padding: '6px 8px', color: homeAwayFlagged ? '#B23A2E' : undefined }}>{r.away}</td>
+                              <td style={{ padding: '6px 8px', color: weekendFlagged ? '#B23A2E' : undefined }}>{r.weekend}</td>
+                              <td style={{ padding: '6px 8px', color: weekendFlagged ? '#B23A2E' : undefined }}>{r.weekday}</td>
                               <td style={{ padding: '6px 8px' }}>{r.home + r.away}</td>
                             </tr>
                           );
