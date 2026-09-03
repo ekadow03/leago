@@ -732,8 +732,28 @@ export async function generateSeasonSchedule(input: GenerateScheduleInput): Prom
           }
 
           scanFrom = pendingQueue.length;
-          const teamsStillFreeToday = teamIds.filter((id) => !usedTeamsToday.has(id));
-          if (teamsStillFreeToday.length < 2) break; // no round could ever pair fewer than 2 free teams
+          // Only worth pulling in another round if 2+ teams are BOTH
+          // still free today AND still under their weekly cap — the
+          // actual precondition for any future round to possibly help
+          // this slot. Checking usedTeamsToday alone isn't enough: once
+          // a division's weekly quota is spread across more configured
+          // days than the cap actually allows (a common, entirely
+          // reasonable setup — extra day/slot options the cap simply
+          // caps usage of), most teams hit maxGamesPerWeek well before
+          // every day's slots are used, and every later day's slots are
+          // then permanently stranded for the rest of that week. Without
+          // this check, that stranding wasn't detected — the search just
+          // kept burning through the whole round-robin cycle for every
+          // stranded slot, exploding weeklyCapDeferred into the
+          // thousands and flooding pendingQueue with pairs nothing could
+          // ever place that week, which is what produced the "1420
+          // pushed" / "252 unplaced matchups" runaway.
+          const teamsStillEligibleToday = teamIds.filter(
+            (id) =>
+              !usedTeamsToday.has(id) &&
+              (maxGamesPerWeek === null || weeklyCountFor(id, weekKey) < maxGamesPerWeek)
+          );
+          if (teamsStillEligibleToday.length < 2) break; // no round could ever pair fewer than 2 eligible teams
           if (targetReachedFor()) break;
           if (extraRoundsPulled >= cycleRounds.length) break; // one full extra lap tried — nothing left to find
 
