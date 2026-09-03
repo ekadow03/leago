@@ -1,7 +1,7 @@
 // app/admin/schedule/schedule-builder.tsx
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createEvent, setEventStatus, publishAllDraftEvents, deleteEvent, deleteEvents, updateEvent } from '@/lib/actions/events';
 import type { CoachConflict } from '@/lib/scheduling-conflicts';
 
@@ -313,6 +313,41 @@ export default function ScheduleBuilder({
   const [slotDraftHome, setSlotDraftHome] = useState<Record<string, string>>({});
   const [slotOpponentChoice, setSlotOpponentChoice] = useState<Record<string, string>>({});
   const [creatingSlotKey, setCreatingSlotKey] = useState<string | null>(null);
+
+  // The native HTML5 drag-and-drop API doesn't reliably auto-scroll the
+  // page when you drag near the top/bottom edge of the viewport -- most
+  // browsers either don't do it at all, or stop well short of the
+  // bottom of a long page, which is exactly what made a "needs a game"
+  // team chip (or a draft game) undraggable into an open slot further
+  // down the schedule than a screen's worth away. This drives that
+  // scrolling ourselves: while any drag is in progress, a window-level
+  // dragover listener checks the pointer's distance from the top/bottom
+  // edge and scrolls the page toward it, faster the closer the pointer
+  // gets to the edge -- so holding near the edge keeps scrolling for as
+  // long as needed to reach any slot, not just a few dozen pixels.
+  useEffect(() => {
+    if (!draggedId && !draggedTeamId) return;
+
+    const EDGE_SIZE = 120; // px from the viewport edge that starts scrolling
+    const MAX_SPEED = 24; // px per dragover tick at the very edge
+
+    function handleWindowDragOver(e: DragEvent) {
+      const y = e.clientY;
+      const viewportHeight = window.innerHeight;
+      let delta = 0;
+      if (y < EDGE_SIZE) {
+        delta = -MAX_SPEED * (1 - y / EDGE_SIZE);
+      } else if (y > viewportHeight - EDGE_SIZE) {
+        delta = MAX_SPEED * (1 - (viewportHeight - y) / EDGE_SIZE);
+      }
+      if (delta !== 0) {
+        window.scrollBy(0, delta);
+      }
+    }
+
+    window.addEventListener('dragover', handleWindowDragOver);
+    return () => window.removeEventListener('dragover', handleWindowDragOver);
+  }, [draggedId, draggedTeamId]);
 
   const divisionsForSeason = divisions.filter((d) => d.season_id === selectedSeasonId);
 
