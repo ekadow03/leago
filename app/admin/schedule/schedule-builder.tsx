@@ -864,7 +864,7 @@ export default function ScheduleBuilder({
       .filter(([, count]) => count > 1)
       .map(([name]) => name);
 
-    const rows: string[][] = [['date', 'time', 'home', 'away', 'location', 'duration']];
+    const rows: string[][] = [['date', 'time', 'home', 'away', 'location', 'duration', 'division']];
     gameEvents.forEach((ev) => {
       rows.push([
         formatDateForGameChanger(ev.start_time),
@@ -873,6 +873,7 @@ export default function ScheduleBuilder({
         teamName(ev.away_team_id),
         ev.location ?? '',
         String(durationFor(ev)),
+        divisionName(ev.division_id),
       ]);
     });
 
@@ -941,7 +942,7 @@ export default function ScheduleBuilder({
     }
 
     const rows: string[][] = [
-      ['SortOrder', 'RoundNo', 'HomeTeam', 'AwayTeam', 'MatchDate', 'StartTime', 'EndTime', 'Location', 'Field'],
+      ['SortOrder', 'RoundNo', 'HomeTeam', 'AwayTeam', 'MatchDate', 'StartTime', 'EndTime', 'Location', 'Field', 'Division'],
     ];
     gameEvents.forEach((ev, i) => {
       rows.push([
@@ -954,6 +955,7 @@ export default function ScheduleBuilder({
         formatTime24hForSportConnect(endTimeIsoFor(ev)),
         venue,
         ev.location ?? '',
+        divisionName(ev.division_id),
       ]);
     });
 
@@ -1041,6 +1043,18 @@ export default function ScheduleBuilder({
 
   function teamName(teamId: string | null) {
     return teams.find((t) => t.id === teamId)?.name ?? '';
+  }
+
+  // Neither GameChanger's nor SportConnect's bulk import recognizes a
+  // division/practice concept (see each export function's own header
+  // comment) -- this is added purely so an export spanning more than
+  // one division (no single division picked in the filter above) is
+  // still readable on its own, as a trailing column past everything
+  // either platform's importer actually reads. Safe for an importer
+  // that ignores unrecognized columns; if one instead errors on an
+  // unexpected column, delete this one before uploading.
+  function divisionName(divisionId: string | null) {
+    return divisions.find((d) => d.id === divisionId)?.name ?? '';
   }
 
   // Drag-and-drop for draft events: drag one onto a different week's
@@ -1592,7 +1606,9 @@ export default function ScheduleBuilder({
           <p style={{ fontSize: 12, color: 'var(--gray)', marginTop: 0, marginBottom: 20 }}>
             Both exports download a CSV of the games currently shown above (filtered by the season/division/team
             picked here), formatted for that platform&apos;s bulk schedule import. Team names must already match
-            the roster already set up on that platform exactly.
+            the roster already set up on that platform exactly. Each row also carries a trailing Division column
+            for your own reference — neither platform&apos;s importer reads it, so delete that column first if
+            theirs errors on an unexpected one.
           </p>
 
           {showBalanceReport && (
